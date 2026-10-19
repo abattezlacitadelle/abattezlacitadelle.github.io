@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Riot FX Demo</title>
+<style>
+  html,body { margin:0; height:100%; overflow:hidden; background:#d9d4c8; font:12px/1.4 system-ui,Segoe UI,sans-serif; color:#e9e6df; }
+  canvas { display:block; touch-action:none; }
+  .panel { position:absolute; background:rgba(18,20,24,.86); border:1px solid rgba(255,255,255,.08); border-radius:8px; padding:9px 11px; }
+  #hud { top:12px; left:12px; width:250px; }
+  #hud .title { font-weight:700; letter-spacing:.08em; color:#ff7a3a; margin-bottom:4px; }
+  #keys { display:grid; grid-template-columns: auto 1fr; gap:1px 8px; margin-top:6px; }
+  #keys kbd { background:#2b2e34; border-radius:3px; padding:0 4px; font:11px ui-monospace,monospace; text-align:center; }
+  #keys .off { color:#666; text-decoration: line-through; }
+  #stats { margin-top:8px; color:#a9a59c; font-variant-numeric: tabular-nums; white-space: pre; font-size:11px; }
+  #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#15171b; font-size:18px; z-index:10; }
+  @media (max-width: 600px) { #hud { width: auto; right: 12px; } }
+</style>
+</head>
+<body>
+<canvas id="map"></canvas>
+<div id="loading">Building Paris…</div>
+<div id="hud" class="panel">
+  <div class="title">RIOT FX PREVIEW · CONCORDE</div>
+  <div>Mock chaos scenario driving <code>src/fx2d.js</code> through the contract collections.</div>
+  <div id="keys"></div>
+  <div id="stats"></div>
+</div>
+
+<script type="module">
+import { loadMapData } from './src/loader.js';
+import { createSim } from './src/sim.js';
+import { createView2D } from './src/render2d.js';
+
+const $ = id => document.getElementById(id);
+const Q = new URLSearchParams(location.search);
+const R = Math.random, rr = (a, b) => a + (b - a) * R(), pick = a => a[(R() * a.length) | 0];
+
+const { data } = await loadMapData();
+const sim = createSim(data);
+const view = createView2D(sim, $('map'));
+const fx = view.fx;
+const api = sim.api || {};
+const addSquad = api.addSquad || sim.addSquad, addLeader = api.addLeader || sim.addLeader, throwGas = api.throwGas || sim.throwGas;
+
+// ------------------------------------------------------------------ scene
+const C = (sim.LM && sim.LM.concorde) || [sim.W / 2, sim.H / 2];
+const crowdC = [C[0] - 40, C[1] + 5], copC = [C[0] + 38, C[1] + 5];
+let leader = null, squad = null;
+try { leader = addLeader?.(crowdC[0], crowdC[1]); if (leader) sim.spawnAround(leader.x, leader.y, 450, leader.id); else sim.spawnAround(crowdC[0], crowdC[1], 450, -1); } catch (e) { console.warn('crowd spawn failed', e); }
+try { squad = addSquad?.(copC[0], copC[1], -1, 0); } catch (e) { console.warn('squad spawn failed', e); }
+const walk = (x, y) => (sim.walkAt ? sim.walkAt(x, y) : true);
+
+// mock contract collections (what combat/riots systems will expose)
+const mock = {
+  projectiles: [], fires: [], props: [], shops: [], events: [],
+  get squads() { return sim.squads || []; }, wind: sim.WIND || { x: 0.35, y: 0.12 },
+  drainEvents() { const o = this.events; this.events = []; return o; },
+};
+const ev = (t, x, y, extra) => mock.events.push({ type: t, t: performance.now() / 1000, x, y, ...extra });
+
+// props: parked cars along nearby roads, some bins / scooters / barriers
+{
+  const near = (x, y, r) => Math.hypot(x - C[0], y - C[1]) < r;
+  for (const rd of data.roads) {
+    if (!/primary|secondary|tertiary|residential|unclassified/.test(rd.k) || rd.w < 7) continue;
+    const p = rd.p;
+    for (let i = 0; i + 3 < p.length; i += 2) {
+      const x0 = p[i], y0 = p[i + 1], x1 = p[i + 2], y1 = p[i + 3], L = Math.hypot(x1 - x0, y1 - y0); if (L < 6) continue;
+      const ux = (x1 - x0) / L, uy = (y1 - y0) / L, a = Math.atan2(uy, ux);
+      for (let d = 3; d < L - 3; d += 6.2) {
+        for (const side of [-1, 1]) {
+          const off = rd.w / 2 - 1.3, x = x0 + ux * d - uy * off * side, y = y0 + uy * d + ux * off * side;
+          if (!near(x, y, 280) || R() < 0.45 || !walk(x, y)) continue;
+          const k = R() < 0.86 ? 'car' : R() < 0.5 ? 'scooter' : 'bin';
+          mock.props.push({ x, y, k, a: k === 'bin' ? 0 : a + (R() < 0.5 ? 0 : Math.PI), state: 'ok' });
+        }
+      }
+    }
+  }
+  if (mock.props.length > 260) mock.props.length = 260;
+  for (let k = 0; k < 6; k++) mock.props.push({ x: crowdC[0] + 22 + rr(-3, 3), y: crowdC[1] + rr(-16, 16), k: 'construction', a: Math.PI / 2 + rr(-0.3, 0.3), state: 'ok' });
+  // shops: street-facing building edges
+  const KS = ['clothes', 'jewelry', 'electronics', 'bakery', 'mobile_phone', 'shoes', 'bank', 'supermarket'];
+  for (const b of data.buildings) {
+    const p = b.p; if (!near(p[0], p[1], 300)) continue;
+    let best = -1, bl = 0;
+    for (let i = 0; i < p.length; i += 2) { const j = (i + 2) % p.length, l = Math.hypot(p[j] - p[i], p[j + 1] - p[i + 1]); if (l > bl) { bl = l; best = i; } }
+    if (bl < 10) continue;
+    const j = (best + 2) % p.length, mx = (p[best] + p[j]) / 2, my = (p[best + 1] + p[j + 1]) / 2, nx = (p[j + 1] - p[best + 1]) / bl, ny = -(p[j] - p[best]) / bl;
+    for (const sgn of [1, -1]) { const x = mx + nx * 2 * sgn, y = my + ny * 2 * sgn; if (walk(x, y)) { mock.shops.push({ x, y, k: pick(KS), v: 1 + ((R() * 3) | 0), looted: 0, burning: false }); break; } }
+    if (mock.shops.length >= 60) break;
+  }
+}
+
+// ------------------------------------------------------------------ chaos generator
+const G = 9.8;
+let pid = 1, fid = 1;
+const SPEED = { rock: 15, paving: 13, bottle: 14, molotov: 13, firework: 24, gas: 19, lbd: 85, flashbang: 16 };
+function throwP(kind, x0, y0, tx, ty, owner) {
+  const d = Math.hypot(tx - x0, ty - y0), T = Math.max(0.15, d / SPEED[kind]);
+  const flat = kind === 'lbd' || kind === 'firework';
+  const vz0 = flat ? (kind === 'firework' ? G * T * 0.18 : 0) : G * T / 2 * (kind === 'gas' ? 1.25 : 1);
+  const p = { id: pid++, kind, owner, x: x0, y: y0, z: 1.6, vx: (tx - x0) / T, vy: (ty - y0) / T, vz: vz0, age: 0, alive: true, x0, y0, tx, ty, T, vz0, wob: R() * 6 };
+  mock.projectiles.push(p);
+  ev('throw', x0, y0, { kind, owner, tx, ty });
+}
+const crowdAgents = () => {
+  const out = []; const n = sim.NA, px = sim.px, py = sim.py, lead = sim.lead;
+  for (let i = 0; i < n && out.length < 400; i++) if (Math.hypot(px[i] - crowdC[0], py[i] - crowdC[1]) < 45) out.push(i);
+  return out;
+};
+let crowdIdx = [];
+function crowdPt(front) {
+  if (crowdIdx.length) { const i = pick(crowdIdx); return [sim.px[i], sim.py[i]]; }
+  return [crowdC[0] + rr(-15, front ? 15 : 10), crowdC[1] + rr(-15, 15)];
+}
+function copPt() {
+  const sq = sim.squads && sim.squads[0];
+  if (sq && sq.n) { const k = (R() * sq.n) | 0; return [sq.ox[k], sq.oy[k]]; }
+  return [copC[0] + rr(-1, 1), copC[1] + rr(-12, 12)];
+}
+function ignite(x, y, kind, r, life) { const f = { id: fid++, x, y, r, intensity: 0.2, kind, age: 0, life }; mock.fires.push(f); ev('fire', x, y, { kind }); return f; }
+function land(p) {
+  const x = p.tx, y = p.ty;
+  switch (p.kind) {
+    case 'rock': case 'paving': ev('impact', x, y, { kind: p.kind }); if (R() < 0.08) ev('injury', x, y); break;
+    case 'bottle': ev('shatter', x, y); break;
+    case 'molotov': {
+      ev('shatter', x, y);
+      const car = mock.props.find(q => q.k === 'car' && q.state === 'ok' && Math.hypot(q.x - x, q.y - y) < 4);
+      if (car && R() < 0.7) igniteCar(car); else ignite(x, y, 'molotov', rr(1.8, 2.6), rr(6, 11));
+      break;
+    }
+    case 'firework': ev('impact', x, y, { kind: 'firework' }); if (R() < 0.4) ev('explosion', x, y, { power: 0.3 }); break;
+    case 'gas': ev('gas', x, y); try { throwGas?.(x, y); } catch {} break;
+    case 'lbd': ev('impact', x, y, { kind: 'lbd' }); if (R() < 0.25) ev('injury', x, y); break;
+    case 'flashbang': ev('flash', x, y); break;
+  }
+}
+function igniteCar(car) { car.state = 'burning'; const f = ignite(car.x, car.y, 'car', 2.6, rr(22, 38)); f.prop = car; }
+
+const rates = { rock: 7, bottle: 1.6, paving: 1.2, molotov: 0.8, firework: 0.9, gas: 0.6, lbd: 2.2, flashbang: 0.2, explosion: 0.35, loot: 0.6, carFire: 0.12, brawl: 0.7, arrest: 0.35, charge: 0.07, shopFire: 0.03 };
+const acc = {};
+const chaos = { on: true, mult: +(Q.get('chaos') || 1) };
+if (Q.has('stress')) chaos.mult = 3;
+const every = (k, dt, fn) => { acc[k] = (acc[k] || 0) + dt * rates[k] * chaos.mult; while (acc[k] > 1) { acc[k] -= 1; if (R() < 0.9) fn(); } };
+let crowdT = 0;
+function updateMock(dt) {
+  if ((crowdT -= dt) <= 0) { crowdT = 1; crowdIdx = crowdAgents(); }
+  // projectiles
+  for (let k = mock.projectiles.length - 1; k >= 0; k--) {
+    const p = mock.projectiles[k]; p.age += dt;
+    const f = Math.min(1, p.age / p.T);
+    let x = p.x0 + (p.tx - p.x0) * f, y = p.y0 + (p.ty - p.y0) * f;
+    if (p.kind === 'firework') { const L = Math.hypot(p.tx - p.x0, p.ty - p.y0) || 1, w = Math.sin(p.age * 14 + p.wob) * 1.2 * Math.sin(f * Math.PI); x += -(p.ty - p.y0) / L * w; y += (p.tx - p.x0) / L * w; }
+    const z = 1.6 * (1 - f) + p.vz0 * p.age - G * p.age * p.age / 2;
+    p.vx = (x - p.x) / Math.max(dt, 1e-3); p.vy = (y - p.y) / Math.max(dt, 1e-3); p.vz = p.vz0 - G * p.age;
+    p.x = x; p.y = y; p.z = Math.max(0, p.kind === 'lbd' ? 1.4 : z);
+    if (f >= 1) { p.alive = false; mock.projectiles.splice(k, 1); land(p); }
+  }
+  // fires
+  for (let k = mock.fires.length - 1; k >= 0; k--) {
+    const f = mock.fires[k]; f.age += dt;
+    const u = f.age / f.life;
+    f.intensity = Math.min(1, 0.25 + f.age / (f.kind === 'car' ? 5 : 0.8)) * (u > 0.65 ? Math.max(0.05, 1 - (u - 0.65) / 0.35) : 1);
+    if (f.kind === 'car' && f.prop && R() < dt * 0.03) ev('explosion', f.x, f.y, { power: 1.4 });
+    if (u >= 1) { mock.fires.splice(k, 1); ev('fireOut', f.x, f.y); if (f.prop) { f.prop.state = 'burnt'; f.prop.burntT = 0; } if (f.shop) f.shop.burning = false; }
+  }
+  for (const p of mock.props) if (p.state === 'burnt' && (p.burntT += dt) > 70) p.state = 'ok';
+  if (!chaos.on) return;
+  // crowd -> police
+  const tgtCop = () => { const [x, y] = copPt(); return [x + rr(-5, 5), y + rr(-5, 5)]; };
+  for (const kind of ['rock', 'bottle', 'paving', 'molotov', 'firework']) every(kind, dt, () => { const [x0, y0] = crowdPt(true), [tx, ty] = tgtCop(); throwP(kind, x0, y0, tx, ty, 'C'); });
+  // police -> crowd
+  every('gas', dt, () => { const [x0, y0] = copPt(), [tx, ty] = crowdPt(); throwP('gas', x0, y0, tx + rr(-6, 6), ty + rr(-6, 6), 'P'); });
+  every('lbd', dt, () => { const [x0, y0] = copPt(), [tx, ty] = crowdPt(true); throwP('lbd', x0, y0, tx, ty, 'P'); });
+  every('flashbang', dt, () => { const [x0, y0] = copPt(), [tx, ty] = crowdPt(true); throwP('flashbang', x0, y0, tx, ty, 'P'); });
+  // random explosions, car fires, looting, scuffles
+  every('explosion', dt, () => { const [x, y] = R() < 0.5 ? crowdPt() : [crowdC[0] + rr(-60, 80), crowdC[1] + rr(-60, 60)]; ev('explosion', x, y, { power: rr(0.6, 1.8) }); });
+  every('carFire', dt, () => { const ok = mock.props.filter(p => p.k === 'car' && p.state === 'ok' && Math.hypot(p.x - C[0], p.y - C[1]) < 220); if (ok.length) igniteCar(pick(ok)); });
+  every('loot', dt, () => { const s = mock.shops.filter(s => s.looted < 1); if (!s.length) { mock.shops.forEach(s => s.looted = 0); return; } const sh = pick(s); sh.looted = Math.min(1, sh.looted + 0.5); ev('loot', sh.x, sh.y, { shop: mock.shops.indexOf(sh) }); ev('shatter', sh.x, sh.y); });
+  every('shopFire', dt, () => { const s = mock.shops.filter(s => s.looted >= 1 && !s.burning); if (s.length) { const sh = pick(s); sh.burning = true; const f = ignite(sh.x, sh.y, 'shop', 3.5, rr(30, 50)); f.shop = sh; } });
+  const front = () => { const [a, b] = crowdPt(true), [c, d] = copPt(); return [(a + c * 2) / 3 + rr(-3, 3), (b + d * 2) / 3 + rr(-3, 3)]; };
+  every('brawl', dt, () => { const [x, y] = front(); ev('brawl', x, y); if (R() < 0.3) ev('injury', x + 1, y); });
+  every('arrest', dt, () => { const [x, y] = front(); ev('arrest', x, y); });
+  every('charge', dt, () => { const sq = sim.squads && sim.squads[0]; if (sq) ev('charge', sq.x, sq.y, { squad: sq.id, dx: sq.dx, dy: sq.dy }); });
+}
+
+// ------------------------------------------------------------------ keys / HUD
+const TOG = [['1', 'projectiles', 'Projectiles'], ['2', 'trails', 'Trails'], ['3', 'explosions', 'Explosions / flashes'], ['4', 'fires', 'Fires'], ['5', 'smoke', 'Smoke'],
+  ['6', 'sparks', 'Sparks / glass / embers'], ['7', 'decals', 'Decals (scorch, glass)'], ['8', 'props', 'Props & shops'], ['9', 'icons', 'Event icons'], ['J', 'shake', 'Screen shake']];
+function renderKeys() {
+  $('keys').innerHTML = TOG.map(([k, o, n]) => `<kbd>${k}</kbd><span class="${fx.opts[o] ? '' : 'off'}">${n}</span>`).join('') +
+    `<kbd>N</kbd><span>Night tint (${fx.night ? 'on' : 'off'})</span><kbd>Space</kbd><span>${chaos.on ? 'Pause' : 'Resume'} chaos</span><kbd>+ / −</kbd><span>Chaos rate ×${chaos.mult.toFixed(1)}</span>` +
+    `<kbd>Z</kbd><span>Cycle zoom</span><kbd>B</kbd><span>Big explosion at cursor</span><kbd>F</kbd><span>Fire at cursor</span><kbd>C</kbd><span>Clear FX</span><kbd>WASD</kbd><span>Pan · wheel zoom</span>`;
+}
+const ZOOMS = [1.0, 3.2, 6.5];
+let zi = 1;
+function setZoom(s, x = C[0] + 4, y = C[1] + 5) { view.focus(x, y, s); view.warmTiles?.(); }
+addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  const t = TOG.find(x => x[0].toLowerCase() === k);
+  if (t) { fx.opts[t[1]] = !fx.opts[t[1]]; renderKeys(); return; }
+  if (k === 'n') { fx.night = fx.night ? 0 : 0.75; renderKeys(); return; }
+  if (k === ' ') { chaos.on = !chaos.on; renderKeys(); e.preventDefault(); return; }
+  if (k === '+' || k === '=') { chaos.mult = Math.min(6, chaos.mult + 0.5); renderKeys(); return; }
+  if (k === '-') { chaos.mult = Math.max(0.5, chaos.mult - 0.5); renderKeys(); return; }
+  if (k === 'z') { zi = (zi + 1) % ZOOMS.length; setZoom(ZOOMS[zi]); return; }
+  if (k === 'c') { fx.clear(); return; }
+  if (k === 'b' && view.cursor.ok) { ev('explosion', view.cursor.x, view.cursor.y, { power: 2.5 }); return; }
+  if (k === 'f' && view.cursor.ok) { ignite(view.cursor.x, view.cursor.y, 'barricade', 3, 30); return; }
+  view.onKey?.(e, k);
+});
+renderKeys();
+
+// ------------------------------------------------------------------ loop
+const z0 = +(Q.get('zoom') || ZOOMS[1]);
+setZoom(z0);
+if (Q.has('night')) fx.night = 0.75;
+// optional pre-roll (headless screenshots): ?pre=seconds
+const pre = +(Q.get('pre') || 0);
+for (let t = 0; t < pre; t += 1 / 30) { sim.advance?.(1 / 30); updateMock(1 / 30); fx.update(1 / 30, mock); }
+view.fxSource = mock;
+view.warmTiles?.();
+$('loading').style.display = 'none';
+
+let last = performance.now(), fpsAcc = 0, fpsN = 0, fps = 0, frameMs = 0, hudT = 0;
+function loop(now) {
+  requestAnimationFrame(loop);
+  const rdt = Math.min(0.05, Math.max(0, (now - last) / 1000)); last = now;
+  fpsAcc += rdt; fpsN++; if (fpsAcc > 0.5) { fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0; }
+  const t0 = performance.now();
+  try { sim.advance?.(rdt); } catch (e) { if (!loop.warned) { console.warn('sim.advance failed (sim refactor in progress?)', e); loop.warned = true; } }
+  updateMock(rdt);
+  view.frame(rdt);
+  frameMs = frameMs * 0.9 + (performance.now() - t0) * 0.1;
+  if ((hudT -= rdt) <= 0) {
+    hudT = 0.25; const s = fx.stats();
+    $('stats').textContent = `${fps} fps · frame ${frameMs.toFixed(1)} ms (fx draw ${s.drawMs} / upd ${s.updMs})\nparticles ${s.particles} · trails ${s.trails} · decals ${s.decals}\nprojectiles ${mock.projectiles.length} · fires ${mock.fires.length} · props ${mock.props.length} · shops ${mock.shops.length}\nzoom ${view.cam.s.toFixed(2)} px/m`;
+  }
+}
+requestAnimationFrame(loop);
+window.__demo = { sim, view, fx, mock, chaos, rates, setZoom, ev, ignite, igniteCar, stats: () => ({ ...fx.stats(), fps, frameMs: +frameMs.toFixed(2), proj: mock.projectiles.length, fires: mock.fires.length }) };
+</script>
+</body>
+</html>

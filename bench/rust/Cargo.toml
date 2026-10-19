@@ -1,0 +1,31 @@
+[package]
+name = "riot_bench"
+version = "0.1.0"
+edition = "2021"
+description = "Crowd-sim benchmark: Rust port of the riot-sim crowd core (see ../README.md)"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bench"
+path = "src/main.rs"
+
+[features]
+default = []
+# Use rayon for the multithreaded two-phase loop instead of the built-in std::thread::scope pool.
+# Needs a working host linker (MSVC link.exe) because rayon's dependencies have build scripts.
+rayon = ["dep:rayon"]
+# Use the C runtime exp() instead of the built-in fdlibm port (MinGW: much slower; MSVC: fast).
+crt-exp = []
+
+[dependencies]
+rayon = { version = "1.10", optional = true }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+debug = false

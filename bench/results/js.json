@@ -1,0 +1,171 @@
+{
+  "runner": "js-node",
+  "node": "v24.19.0",
+  "results": [
+    {
+      "scenario": "S1",
+      "N": 3000,
+      "warmup": 200,
+      "steps": 2000,
+      "fieldMs": 11.898839999999998,
+      "fieldChecksum": "892257ea",
+      "stepMs": {
+        "mean": 2.040275099999996,
+        "p50": 1.8674000000000888,
+        "p95": 3.26549999999952,
+        "min": 1.4375,
+        "max": 10.624399999999696
+      },
+      "checksum": {
+        "sum": 48848093.3180747,
+        "fnv": "67ad8fd3"
+      },
+      "aggregate": {
+        "NA": 3000,
+        "attached": 1464,
+        "idle": 1536,
+        "fleeing": 0,
+        "gone": 0,
+        "meanAdvanceAll": 96.5138,
+        "meanAdvanceFollowers": 197.11721311475415,
+        "meanSpeed": 0.40571547721465473,
+        "leaders": [
+          {
+            "count": 721,
+            "x": 2972.34,
+            "y": 783.44,
+            "prog": 2997.6,
+            "energy": 94.798,
+            "arrived": false
+          },
+          {
+            "count": 435,
+            "x": 2682.42,
+            "y": 971.54,
+            "prog": 2624.4,
+            "energy": 97.455,
+            "arrived": false
+          },
+          {
+            "count": 308,
+            "x": 2151.5,
+            "y": 1265.69,
+            "prog": 1966.8,
+            "energy": 97.744,
+            "arrived": false
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "S2",
+      "N": 10000,
+      "warmup": 200,
+      "steps": 2000,
+      "fieldMs": 16.24322000000002,
+      "fieldChecksum": "892257ea",
+      "stepMs": {
+        "mean": 9.113773100000031,
+        "p50": 8.233299999999872,
+        "p95": 14.54780000000028,
+        "min": 5.582000000000335,
+        "max": 23.866500000000087
+      },
+      "checksum": {
+        "sum": 163330582.35779524,
+        "fnv": "2fbd4aec"
+      },
+      "aggregate": {
+        "NA": 10000,
+        "attached": 4958,
+        "idle": 5042,
+        "fleeing": 0,
+        "gone": 0,
+        "meanAdvanceAll": 75.73582866293019,
+        "meanAdvanceFollowers": 152.77963636363603,
+        "meanSpeed": 0.40754732421627204,
+        "leaders": [
+          {
+            "count": 2493,
+            "x": 3034.07,
+            "y": 736.79,
+            "prog": 3081.6,
+            "energy": 92.96,
+            "arrived": false
+          },
+          {
+            "count": 1477,
+            "x": 2755.14,
+            "y": 918.31,
+            "prog": 2718.6,
+            "energy": 95.177,
+            "arrived": false
+          },
+          {
+            "count": 988,
+            "x": 2229.09,
+            "y": 1228.45,
+            "prog": 2059.2,
+            "energy": 96.262,
+            "arrived": false
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "S3",
+      "N": 30000,
+      "warmup": 200,
+      "steps": 2000,
+      "fieldMs": 12.746899999999732,
+      "fieldChecksum": "892257ea",
+      "stepMs": {
+        "mean": 29.4931556500001,
+        "p50": 28.13310000000638,
+        "p95": 41.512500000004366,
+        "min": 18.22070000000167,
+        "max": 57.204899999997
+      },
+      "checksum": {
+        "sum": 490498850.62518024,
+        "fnv": "12a02c66"
+      },
+      "aggregate": {
+        "NA": 30000,
+        "attached": 15148,
+        "idle": 14852,
+        "fleeing": 0,
+        "gone": 0,
+        "meanAdvanceAll": 56.520648475548576,
+        "meanAdvanceFollowers": 111.97473224910722,
+        "meanSpeed": 0.2561571723116993,
+        "leaders": [
+          {
+            "count": 7608,
+            "x": 3082.89,
+            "y": 715.7,
+            "prog": 3138,
+            "energy": 81.816,
+            "arrived": false
+          },
+          {
+            "count": 4487,
+            "x": 2796.03,
+            "y": 882.78,
+            "prog": 2787.6,
+            "energy": 88.604,
+            "arrived": false
+          },
+          {
+            "count": 3053,
+            "x": 2292.3,
+            "y": 1198.13,
+            "prog": 2134.2,
+            "energy": 91.755,
+            "arrived": false
+          }
+        ]
+      }
+    }
+  ]
+}

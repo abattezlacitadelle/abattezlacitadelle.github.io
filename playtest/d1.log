@@ -1,0 +1,24 @@
+[reckless-1] DONE 2 min: LOSS (stopped) day 1 
+[reckless-2] DONE 2 min: LOSS (stopped) day 1 
+[careful-2] DONE 2.2 min: LOSS (stopped) day 1 
+[careful-1] DONE 2.5 min: LOSS (stopped) day 1 
+[passive-1] DONE 4.1 min: LOSS (stopped) day 1 
+[diversion-1] DONE 4.2 min: LOSS (stopped) day 1 
+[passive-2] DONE 5 min: LOSS (stopped) day 1 
+[diversion-2] DONE 5.1 min: LOSS (stopped) day 1 
+# Playtest report
+
+2026-10-18T20:45:17.344Z
+
+## Campaigns
+
+| strategy | seed | result | day | time | reason | peak crowd by day | arrests | leaders arrested | min dist to gate by day (m) | wall |
+|---|---|---|---|---|---|---|---|---|---|---|
+| passive | 1 | loss | 1 |  | stopped | 1002 | 241 | d1:Louise,Karim,Inès | 2105 | 4.1m |
+| passive | 2 | loss | 1 |  | stopped | 1001 | 471 | d1:Karim,Louise,Inès | 2095 | 5m |
+| reckless | 1 | loss | 1 |  | stopped | 1001 | 11 | d1:Inès,Louise,Karim | 69 | 2m |
+| reckless | 2 | loss | 1 |  | stopped | 1001 | 8 | d1:Louise,Karim,Inès | 113 | 2m |
+| careful | 1 | loss | 1 |  | stopped | 1003 | 62 | d1:Inès,Louise,Karim | 110 | 2.5m |
+| careful | 2 | loss | 1 |  | stopped | 1004 | 29 | d1:Inès,Louise,Karim | 71 | 2.2m |
+| diversion | 1 | loss | 1 |  | stopped | 1003 | 123 | d1:Louise,Karim,Inès | 481 | 4.2m |
+| diversion | 2 | loss | 1 |  | stopped | 1005 | 128 | d1:Louise,Inès,Karim | 120 | 5.1m |

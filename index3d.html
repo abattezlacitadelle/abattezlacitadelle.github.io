@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paris Riot Sim 3D</title>
+<style>
+  :root { --panel: rgba(18,20,24,.82); --ink:#e9e6df; --mute:#9a978f; --accent:#e63946; }
+  html,body { margin:0; height:100%; overflow:hidden; background:#a9b9c9; font:13px/1.35 system-ui,Segoe UI,sans-serif; color:var(--ink); }
+  canvas { display:block; }
+  .panel { position:absolute; background:var(--panel); border:1px solid rgba(255,255,255,.08); border-radius:8px; padding:10px 12px; backdrop-filter: blur(4px); }
+  #hud { top:12px; left:12px; width:250px; }
+  #hud .title { font-weight:700; letter-spacing:.08em; font-size:12px; color:var(--accent); }
+  #clock { font-size:18px; font-weight:600; margin:2px 0 8px; }
+  .row { display:flex; align-items:center; gap:8px; margin:4px 0; }
+  .row label { width:46px; color:var(--mute); }
+  .row input[type=range] { flex:1; }
+  #stats { color:var(--mute); margin-top:6px; font-variant-numeric: tabular-nums; }
+  #stats b { color:var(--ink); font-weight:600; }
+  #leaders { margin-top:8px; display:flex; flex-direction:column; gap:3px; }
+  .lrow { display:flex; align-items:center; gap:6px; padding:3px 5px; border-radius:5px; cursor:pointer; font-variant-numeric: tabular-nums; }
+  .lrow:hover { background:rgba(255,255,255,.06); }
+  .lrow.sel { background:rgba(255,255,255,.14); }
+  .lrow .sw { width:10px; height:10px; border-radius:50%; flex:none; }
+  .lrow .nm { flex:1; }
+  .lrow .bar { width:40px; height:4px; background:#333; border-radius:2px; overflow:hidden; }
+  .lrow .bar i { display:block; height:100%; background:#7bd389; }
+  #help { bottom:12px; left:12px; max-width:560px; color:var(--mute); font-size:12px; }
+  #help kbd { background:#2b2e34; color:var(--ink); border-radius:3px; padding:0 4px; font: 11px ui-monospace,monospace; }
+  #help .cols { display:grid; grid-template-columns: 1fr 1fr; gap:2px 16px; }
+  #banner { position:absolute; top:18%; left:50%; transform:translateX(-50%); font-size:34px; font-weight:800; letter-spacing:.04em; color:#fff; text-shadow:0 2px 12px #000; display:none; text-align:center; }
+  #toast { position:absolute; top:12px; left:50%; transform:translateX(-50%); padding:6px 12px; display:none; }
+  #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#15171b; font-size:18px; z-index:10; }
+  .lm { color:#fff; font-size:11px; font-weight:600; text-shadow:0 1px 3px #000,0 0 6px #000; white-space:nowrap; pointer-events:none; letter-spacing:.03em; }
+  .lm.goal { color:#ffd166; font-size:13px; }
+  .ll { background:rgba(15,15,18,.78); border-left:3px solid; padding:1px 6px 2px; border-radius:3px; font-size:11px; white-space:nowrap; color:#fff; pointer-events:auto; cursor:pointer; font-variant-numeric: tabular-nums; }
+  .ll .bar { height:3px; background:#333; margin-top:2px; } .ll .bar i { display:block; height:100%; background:#7bd389; }
+  .pl { background:rgba(20,30,60,.8); padding:1px 5px; border-radius:3px; font-size:10px; color:#cfe0ff; white-space:nowrap; pointer-events:none; }
+  .pl .bar { height:2px; background:#333; margin-top:1px; } .pl .bar i { display:block; height:100%; background:#8fb3ff; }
+  .attrib { position:absolute; right:6px; bottom:4px; font-size:10px; color:#333; }
+  /* [day] day loop: HUD additions, ticker, overlays */
+  #daystats { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,.07); font-variant-numeric:tabular-nums; }
+  #daystats span { color:var(--mute); font-size:10.5px; text-align:center; text-transform:uppercase; letter-spacing:.04em; }
+  #daystats b { display:block; color:var(--ink); font-weight:600; font-size:14px; letter-spacing:0; }
+  #clock .phase { font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; padding:2px 6px; border-radius:4px; vertical-align:3px; margin-left:4px; background:#2b2e34; color:var(--mute); }
+  #clock .phase.day { background:#3a3420; color:#ffd166; } #clock .phase.dusk { background:#3b2433; color:#f4a0c0; }
+  button.mini { background:#2b2e34; color:var(--ink); border:1px solid rgba(255,255,255,.1); border-radius:4px; font:11px system-ui,sans-serif; padding:1px 6px; cursor:pointer; white-space:nowrap; }
+  button.mini:hover { background:#3a3e46; }
+  .lrow .st { font-size:9.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; padding:0 4px; border-radius:3px; }
+  .st.peaceful, .stance.peaceful { color:#8ec5ff; } .st.firm, .stance.firm { color:#e9e6df; } .st.unleashed, .stance.unleashed { color:#ff6b6b; }
+  .st.arr { color:#ff6b6b; background:rgba(230,57,70,.15); }
+  .lrow.arrested { opacity:.5; cursor:default; } .lrow.arrested .nm { text-decoration:line-through; }
+  .lrow .ct { min-width:30px; text-align:right; }
+  #lact { margin-top:8px; padding-top:7px; border-top:1px solid rgba(255,255,255,.07); font-size:12px; }
+  #lact .la-h { font-weight:600; display:flex; align-items:center; gap:6px; margin-bottom:4px; }
+  #lact .sw { width:10px; height:10px; border-radius:50%; }
+  #lact .la-row { display:flex; align-items:center; gap:5px; margin:3px 0; }
+  #lact .stance { font-weight:700; text-transform:uppercase; letter-spacing:.06em; font-size:11px; min-width:68px; text-align:center; }
+  #lact kbd, #ticker kbd, #overlay kbd { background:#2b2e34; color:var(--ink); border-radius:3px; padding:0 4px; font:10px ui-monospace,monospace; }
+  #lact button.act { flex:1; background:#24272d; color:var(--ink); border:1px solid rgba(255,255,255,.1); border-radius:5px; padding:3px 4px; font:12px system-ui,sans-serif; cursor:pointer; }
+  #lact button.act:hover:not([disabled]) { background:#33373f; } #lact button.act[disabled] { opacity:.55; cursor:default; }
+  #lact button.act b { color:#7bd389; font-weight:600; } #lact button.act i { color:var(--mute); font-style:normal; }
+  .mute { color:var(--mute); }
+  #ticker { right:12px; bottom:22px; width:360px; padding:6px 10px; font-size:12px; display:none; }
+  #ticker .tk { padding:2px 0 2px 8px; border-left:2px solid #555; margin:3px 0; cursor:pointer; transition:opacity .4s; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #ticker .tk.good { border-color:#7bd389; } #ticker .tk.warn { border-color:#f4a261; } #ticker .tk.bad { border-color:#e63946; color:#ffd7d9; font-weight:600; }
+  #ticker .tt { color:var(--mute); font-variant-numeric:tabular-nums; margin-right:6px; font-size:11px; }
+  #ticker .tn { color:var(--mute); font-size:11px; }
+  #overlay { position:absolute; inset:0; pointer-events:none; z-index:20; display:none; }
+  #overlay.brief { display:block; }
+  #overlay.full { background:rgba(10,11,14,.62); backdrop-filter:blur(2px); pointer-events:auto; display:flex; align-items:center; justify-content:center; }
+  #overlay .card { background:rgba(18,20,24,.94); border:1px solid rgba(255,255,255,.1); border-radius:10px; padding:16px 18px; pointer-events:auto; box-shadow:0 10px 40px rgba(0,0,0,.45); }
+  #overlay .card.side { position:absolute; top:46px; right:12px; width:350px; max-height:calc(100% - 70px); overflow:auto; box-sizing:border-box; }
+  #overlay .card.mid { width:520px; max-width:calc(100% - 32px); max-height:calc(100% - 40px); overflow:auto; box-sizing:border-box; }
+  #overlay .dayno { font-weight:800; font-size:22px; letter-spacing:.06em; color:var(--accent); } #overlay .dayno span { color:var(--mute); font-weight:600; font-size:15px; }
+  #overlay .flav { font-size:15px; margin:2px 0 10px; color:var(--ink); font-style:italic; }
+  #overlay .sec { margin-top:12px; } #overlay .sh { font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--mute); margin-bottom:5px; display:flex; align-items:baseline; justify-content:space-between; }
+  #overlay b.big { font-size:17px; color:var(--ink); letter-spacing:0; }
+  #overlay .kv { display:flex; justify-content:space-between; gap:12px; padding:2px 0; font-variant-numeric:tabular-nums; }
+  #overlay .kv span { color:var(--mute); } #overlay .kv b { font-weight:600; }
+  #overlay .bad, #overlay .kv.bad b { color:#ff8a8f; } #overlay .good, #overlay .kv.good b { color:#7bd389; }
+  #overlay .hint { color:var(--mute); font-size:11.5px; margin-bottom:6px; }
+  #overlay .lpick { padding:6px 7px; border-radius:6px; margin:3px 0; cursor:pointer; border:1px solid transparent; }
+  #overlay .lpick.cur { background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.12); }
+  #overlay .lp-n { display:flex; align-items:center; gap:6px; font-weight:600; margin-bottom:4px; }
+  #overlay .sw { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  #overlay .chips { display:flex; flex-wrap:wrap; gap:4px; }
+  #overlay .chip { background:#24272d; color:var(--mute); border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:2px 9px; font:11.5px system-ui,sans-serif; cursor:pointer; }
+  #overlay .chip:hover { color:var(--ink); } #overlay .chip.on { background:#e9e6df; color:#15171b; border-color:#e9e6df; font-weight:600; }
+  #overlay button.go { margin-top:14px; width:100%; background:var(--accent); color:#fff; border:0; border-radius:7px; padding:9px; font:600 14px system-ui,sans-serif; letter-spacing:.03em; cursor:pointer; }
+  #overlay button.go:hover { filter:brightness(1.1); } #overlay button.go kbd { background:rgba(0,0,0,.25); color:#fff; margin-left:6px; }
+  #overlay .sgrid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:8px; }
+  #overlay .sg { background:#202329; border-radius:6px; padding:7px 8px; text-align:center; } #overlay .sg b { display:block; font-size:20px; font-variant-numeric:tabular-nums; }
+  #overlay .sg span { color:var(--mute); font-size:11px; }
+  #overlay .support { height:8px; border-radius:4px; background:repeating-linear-gradient(45deg,#2b2e34 0 6px,#24272d 6px 12px); margin:2px 0 4px; }
+  #overlay .endt { font-size:44px; font-weight:900; letter-spacing:.12em; text-align:center; }
+  #overlay.win .endt { color:#ffd166; } #overlay.lose .endt { color:var(--accent); }
+  #overlay.win button.go { background:#e0b03a; color:#15171b; }
+  #overlay.end .flav { text-align:center; margin-bottom:14px; }
+  #spawnmk { position:absolute; left:0; top:0; width:0; height:0; z-index:4; }
+  #spawnmk .smk, #spawnmk .rmk { position:absolute; left:0; top:0; cursor:pointer; white-space:nowrap; }
+  #spawnmk .smk i { position:absolute; left:-9px; top:-9px; width:14px; height:14px; border-radius:50%; border:2px solid #fff; background:rgba(20,22,26,.7); box-shadow:0 0 0 2px rgba(0,0,0,.4); }
+  #spawnmk .smk.on i { background:#e63946; }
+  #spawnmk .smk span { position:absolute; left:12px; top:-10px; background:rgba(18,20,24,.88); color:#fff; font-size:11px; font-weight:600; padding:1px 6px; border-radius:4px; display:flex; align-items:center; gap:3px; }
+  #spawnmk .smk em { width:8px; height:8px; border-radius:50%; display:inline-block; }
+  #spawnmk .rmk { pointer-events:none; } #spawnmk .rmk i { position:absolute; left:-8px; top:-8px; width:16px; height:16px; border-radius:50%; background:#f4a261; color:#15171b; font:800 11px/16px system-ui; text-align:center; font-style:normal; box-shadow:0 0 0 2px rgba(0,0,0,.35); }
+  #spawnmk .rmk span { position:absolute; left:11px; top:-8px; font-size:10px; color:#15171b; font-weight:700; text-shadow:0 0 3px #fff,0 0 3px #fff; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="loading">Building Paris…</div>
+<div id="hud" class="panel">
+  <div class="title">PARIS RIOT SIM · CROWD PROTOTYPE</div>
+  <div id="clock">Day 1 · 08:00</div>
+  <div class="row"><label>Speed</label><input type="range" id="speed" min="1" max="60" value="15"><span id="speedv">15×</span><button id="skipdusk" class="mini" title="Debug: skip ahead in the day">Skip ▸ dusk</button></div>
+  <div id="stats"></div>
+  <div id="daystats"></div>
+  <div id="leaders"></div>
+  <div id="lact"></div>
+</div>
+<div id="help" class="panel">
+  <div class="cols">
+    <div><kbd>Left-click</kbd> select a leader (<kbd>Shift</kbd> to add more)</div>
+    <div><kbd>Right-click</kbd> send selected leaders there</div>
+    <div><kbd>Left-drag</kbd> pan · <kbd>Right-drag</kbd> rotate · <kbd>Wheel</kbd> zoom</div>
+    <div><kbd>1</kbd>–<kbd>9</kbd> select a leader · <kbd>F</kbd> focus · <kbd>Space</kbd> pause</div>
+    <div><kbd>Q</kbd>/<kbd>E</kbd> stance · <kbd>T</kbd> rally · <kbd>Y</kbd> scatter</div>
+    <div><kbd>Enter</kbd> start the day / continue · <kbd>H</kbd> hide help · <kbd>I</kbd> legend</div>
+    <div class="mute">Debug: <kbd>L</kbd> leader · <kbd>R</kbd> +100 · <kbd>P</kbd>/<kbd>X</kbd> squad · <kbd>G</kbd> gas</div>
+    <div class="mute">Debug: <kbd>B</kbd> riot · <kbd>C</kbd> combat demo · <kbd>N</kbd> grid</div>
+  </div>
+  <div style="margin-top:4px">Seven days to bring a leader with ≥300 followers into the gold ring at the <b style="color:#ffd166">Élysée</b>. You lose if every leader is arrested, if the march fizzles out, or if day 7 ends.</div>
+</div>
+<div id="banner"></div>
+<div id="toast" class="panel"></div>
+<div id="ticker" class="panel"></div>
+<div id="spawnmk"></div>
+<div id="overlay"></div>
+<div class="panel" style="top:12px;right:12px;font-size:11px;padding:5px 9px"><a id="view2d" href="index.html" style="color:#cfe0ff">2D view</a></div>
+<div class="attrib">Map data © OpenStreetMap contributors</div>
+
+<script type="module">
+import { loadMapData } from './src/loader.js';
+import { createSim } from './src/sim.js';
+import { createView3D } from './src/render3d.js';
+import { bootPage } from './src/ui.js';
+document.getElementById('view2d').href = 'index.html' + location.search;
+bootPage(loadMapData, createSim, sim => createView3D(sim));
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+[careful-3] DONE 2.1 min: WIN (elysee) day 1 09:22
+[reckless-1] DONE 3.4 min: LOSS (decapitated) day 7 08:09
+[reckless-3] DONE 3.5 min: LOSS (decapitated) day 7 08:18
+[reckless-2] DONE 4.2 min: LOSS (decapitated) day 7 08:46
+[careful-2] DONE 8.3 min: LOSS (decapitated) day 7 08:46
+[careful-1] DONE 10.5 min: LOSS (decapitated) day 7 09:38
+[passive-1] DONE 10.8 min: LOSS (decapitated) day 5 13:05
+[passive-2] DONE 12.4 min: LOSS (decapitated) day 7 08:42
+[diversion-2] DONE 15.6 min: LOSS (decapitated) day 7 09:15
+[diversion-1] DONE 16.3 min: LOSS (decapitated) day 7 09:02
+[passive-3] DONE 18.7 min: LOSS (decapitated) day 7 16:40
+[diversion-3] DONE 19.4 min: LOSS (decapitated) day 7 09:44
+# Playtest report
+
+2026-10-18T21:05:40.970Z
+
+## Campaigns
+
+| strategy | seed | result | day | time | reason | peak crowd by day | arrests | leaders arrested | min dist to gate by day (m) | wall |
+|---|---|---|---|---|---|---|---|---|---|---|
+| passive | 1 | loss | 5 | 13:05 | decapitated | 1002 / 701 / 589 / 575 / 617 | 1272 | d1:Louise,Karim,Inès d2:Malik d3:Chloé d4:Théo d5:Sofia | 2105 / 2422 / 2988 / 2648 / 2971 | 10.8m |
+| passive | 2 | loss | 7 | 08:42 | decapitated | 1001 / 702 / 587 / 575 / 618 / 690 / 780 | 1883 | d1:Karim,Louise,Inès d2:Malik d3:Chloé d4:Théo d5:Sofia d6:Hugo d7:Yasmine | 2095 / 2423 / 2988 / 2648 / 2988 / 2648 / 2988 | 12.4m |
+| passive | 3 | loss | 7 | 16:40 | decapitated | 1009 / 706 / 593 / 576 / 620 / 691 / 782 | 3088 | d1:Karim,Louise,Inès d2:Malik d3:Chloé d4:Théo d5:Sofia d6:Hugo d7:Yasmine | 2105 / 2423 / 2988 / 2648 / 2988 / 2648 / 2988 | 18.7m |
+| reckless | 1 | loss | 7 | 08:09 | decapitated | 1001 / 702 / 587 / 579 / 621 / 693 / 782 | 20 | d1:Inès,Louise,Karim d2:Malik d3:Chloé d4:Théo d5:Sofia d6:Hugo d7:Yasmine | 69 / 1805 / 1807 / 1224 / 1777 / 1776 / 1783 | 3.4m |
+| reckless | 2 | loss | 7 | 08:46 | decapitated | 1001 / 703 / 589 / 576 / 621 / 692 / 781 | 44 | d1:Louise,Karim,Inès d2:Malik d3:Chloé d4:Théo d5:Sofia d6:Hugo d7:Yasmine | 113 / 994 / 1601 / 1807 / 1805 / 1807 / 945 | 4.2m |
+| reckless | 3 | loss | 7 | 08:18 | decapitated | 1003 / 704 / 591 / 575 / 620 / 691 / 782 | 58 | d1:Karim,Louise,Inès d2:Malik d3:Chloé d4:Théo d5:Sofia d6:Hugo d7:Yasmine | 70 / 1807 / 163 / 1804 / 1601 / 1807 / 1752 | 3.5m |
+| careful | 1 | loss | 7 | 09:38 | decapitated | 1003 / 703 / 593 / 579 / 638 / 703 / 971 | 863 | d1:Inès,Louise,Karim d2:Malik d3:Chloé d4:Théo d5:Sofia d6:Hugo d7:Yasmine | 110 / 370 / 1119 / 616 / 936 / 1339 / 1214 | 10.5m |
+| careful | 2 | loss | 7 | 08:46 | decapitated | 1004 / 702 / 686 / 690 / 680 / 724 / 799 | 559 | d1:Inès,Louise,Karim d2:Malik d3:Chloé d4:Théo d5:Sofia d6:Hugo d7:Yasmine | 71 / 1730 / 886 / 916 / 659 / 1462 / 1288 | 8.3m |
+| careful | 3 | **WIN** | 1 | 09:22 | elysee | 1005 | 48 | d1:Inès,Karim | 26 | 2.1m |
+| diversion | 1 | loss | 7 | 09:02 | decapitated | 1003 / 726 / 640 / 605 / 633 / 763 / 873 | 789 | d1:Louise,Karim,Inès d2:Malik d3:Chloé d4:Théo d5:Sofia d6:Hugo d7:Yasmine | 481 / 1196 / 1180 / 1615 / 1753 / 224 / 1329 | 16.3m |
+| diversion | 2 | loss | 7 | 09:15 | decapitated | 1005 / 778 / 654 / 624 / 643 / 712 / 823 | 781 | d1:Louise,Inès,Karim d2:Malik d3:Chloé d4:Théo d5:Sofia d6:Hugo d7:Yasmine | 120 / 1162 / 962 / 995 / 1166 / 1188 / 1134 | 15.6m |
+| diversion | 3 | loss | 7 | 09:44 | decapitated | 1096 / 823 / 740 / 686 / 686 / 731 / 812 | 558 | d1:Louise,Karim,Inès d2:Malik d3:Chloé d4:Théo d5:Sofia d6:Hugo d7:Yasmine | 157 / 1136 / 872 / 1178 / 1586 / 1868 / 1187 | 19.4m |

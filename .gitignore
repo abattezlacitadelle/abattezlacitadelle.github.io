@@ -1,0 +1,6 @@
+data/raw/
+bench/fixtures/
+bench/rust/target/
+bench/.toolchain/
+node_modules/
+*.log.tmp

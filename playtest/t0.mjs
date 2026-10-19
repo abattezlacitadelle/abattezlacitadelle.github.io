@@ -1,0 +1,10 @@
+import { makeSim } from '../tools/nodesim.mjs';
+const t0 = performance.now();
+const sim = makeSim('small', 1);
+console.log('build', (performance.now() - t0).toFixed(0), 'ms', sim.walkCells, sim.day.managed);
+sim.initScenario();
+sim.api.dayStart();
+console.log(sim.day.phase, sim.NA, sim.squads.length);
+let t1 = performance.now();
+for (let i = 0; i < 3000; i++) sim.step(0.12);
+console.log('3000 steps', ((performance.now() - t1) / 3000).toFixed(2), 'ms/step', sim.day.t / 3600, sim.NA, JSON.stringify(sim.day.stats));
