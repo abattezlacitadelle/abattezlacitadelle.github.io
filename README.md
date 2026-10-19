@@ -2,9 +2,9 @@
 
 > **Avertissement / Disclaimer**
 >
-> Œuvre de fiction. Ce jeu est une simulation imaginaire : toute ressemblance avec des lieux, des personnes, des commerces ou des événements existants ou ayant existé serait purement fortuite. Le fait de devoir recourir à des dégradations pour gagner ne doit en aucun cas être compris comme un encouragement à commettre des dégradations. Ce jeu n'encourage ni ne cautionne les violences policières qu'il représente.
+> Œuvre de fiction. Ce jeu est une simulation imaginaire : toute ressemblance avec des lieux, des personnes, des commerces ou des événements existants ou ayant existé serait purement fortuite. Le fait de devoir recourir à des dégradations pour gagner ne doit en aucun cas être compris comme un encouragement à commettre des dégradations.
 >
-> A work of fiction. This game is an imaginary simulation: any resemblance to real places, people, businesses or events, past or present, is purely coincidental. Having to resort to property damage to win must not be taken as encouragement to damage property. Nor does the game encourage or condone the police violence it depicts.
+> A work of fiction. This game is an imaginary simulation: any resemblance to real places, people, businesses or events, past or present, is purely coincidental. Having to resort to property damage to win must not be taken as encouragement to damage property.
 
 A top-down strategy game set in a fictional city. You lead a protest movement for seven days. Your leaders nudge their marches through the city streets toward the Élysée, while an organised police force blocks, cordons, kettles, gasses and arrests. Uncontrolled riots, looting, fires and brawls play out around you. Each person is simulated as an agent in a fluid-like crowd: about 3,000 people and 6 to 9 police squads.
 
