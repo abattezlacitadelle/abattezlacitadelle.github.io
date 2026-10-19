@@ -1,6 +1,12 @@
-# Paris Riot Sim
+# Riot Sim
 
-A top-down strategy game set in central Paris. You lead a protest movement for seven days. Your leaders nudge their marches through real streets (OpenStreetMap data) toward the Élysée, while an organised police force blocks, cordons, kettles, gasses and arrests. Uncontrolled riots, looting, fires and brawls play out around you. Each person is simulated as an agent in a fluid-like crowd: about 3,000 people and 6 to 9 police squads.
+> **Avertissement / Disclaimer**
+>
+> Œuvre de fiction. Ce jeu est une simulation imaginaire : toute ressemblance avec des lieux, des personnes, des commerces ou des événements existants ou ayant existé serait purement fortuite. Il n'encourage ni ne cautionne aucune forme de violence, de dégradation ou d'atteinte aux personnes.
+>
+> A work of fiction. This game is an imaginary simulation: any resemblance to real places, people, businesses or events, past or present, is purely coincidental. It does not encourage or condone violence, damage to property or harm to anyone.
+
+A top-down strategy game set in a fictional city. You lead a protest movement for seven days. Your leaders nudge their marches through the city streets toward the Élysée, while an organised police force blocks, cordons, kettles, gasses and arrests. Uncontrolled riots, looting, fires and brawls play out around you. Each person is simulated as an agent in a fluid-like crowd: about 3,000 people and 6 to 9 police squads.
 
 **Goal:** bring a leader with at least 300 followers into the gold ring at the Élysée gate and hold it. You lose if every leader is arrested, if the march fizzles out, or if day 7 ends.
 

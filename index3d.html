@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Paris Riot Sim 3D</title>
+<title>Riot Sim 3D</title>
 <style>
   :root { --panel: rgba(18,20,24,.82); --ink:#e9e6df; --mute:#9a978f; --accent:#e63946; }
   html,body { margin:0; height:100%; overflow:hidden; background:#a9b9c9; font:13px/1.35 system-ui,Segoe UI,sans-serif; color:var(--ink); }
@@ -30,7 +30,7 @@
   #help .cols { display:grid; grid-template-columns: 1fr 1fr; gap:2px 16px; }
   #banner { position:absolute; top:18%; left:50%; transform:translateX(-50%); font-size:34px; font-weight:800; letter-spacing:.04em; color:#fff; text-shadow:0 2px 12px #000; display:none; text-align:center; }
   #toast { position:absolute; top:12px; left:50%; transform:translateX(-50%); padding:6px 12px; display:none; }
-  #loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#15171b; font-size:18px; z-index:10; }
+  #loading { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#15171b; font-size:18px; z-index:10; }
   .lm { color:#fff; font-size:11px; font-weight:600; text-shadow:0 1px 3px #000,0 0 6px #000; white-space:nowrap; pointer-events:none; letter-spacing:.03em; }
   .lm.goal { color:#ffd166; font-size:13px; }
   .ll { background:rgba(15,15,18,.78); border-left:3px solid; padding:1px 6px 2px; border-radius:3px; font-size:11px; white-space:nowrap; color:#fff; pointer-events:auto; cursor:pointer; font-variant-numeric: tabular-nums; }
@@ -105,6 +105,7 @@
   #spawnmk .smk em { width:8px; height:8px; border-radius:50%; display:inline-block; }
   #spawnmk .rmk { pointer-events:none; } #spawnmk .rmk i { position:absolute; left:-8px; top:-8px; width:16px; height:16px; border-radius:50%; background:#f4a261; color:#15171b; font:800 11px/16px system-ui; text-align:center; font-style:normal; box-shadow:0 0 0 2px rgba(0,0,0,.35); }
   #spawnmk .rmk span { position:absolute; left:11px; top:-8px; font-size:10px; color:#15171b; font-weight:700; text-shadow:0 0 3px #fff,0 0 3px #fff; }
+  .disclaimer { max-width:640px; margin-top:18px; padding:0 16px; font-size:12px; line-height:1.45; color:#9a978f; text-align:center; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -114,9 +115,9 @@
 </script>
 </head>
 <body>
-<div id="loading">Building Paris…</div>
+<div id="loading"><div>Building the city…</div><div class="disclaimer">Œuvre de fiction. Ce jeu est une simulation imaginaire : toute ressemblance avec des lieux, des personnes, des commerces ou des événements existants ou ayant existé serait purement fortuite. Il n'encourage ni ne cautionne aucune forme de violence, de dégradation ou d'atteinte aux personnes.<br><span lang="en">A work of fiction. This game is an imaginary simulation: any resemblance to real places, people, businesses or events, past or present, is purely coincidental. It does not encourage or condone violence, damage to property or harm to anyone.</span></div></div>
 <div id="hud" class="panel">
-  <div class="title">PARIS RIOT SIM · CROWD PROTOTYPE</div>
+  <div class="title">RIOT SIM · CROWD PROTOTYPE</div>
   <div id="clock">Day 1 · 08:00</div>
   <div class="row"><label>Speed</label><input type="range" id="speed" min="1" max="60" value="15"><span id="speedv">15×</span><button id="skipdusk" class="mini" title="Debug: skip ahead in the day">Skip ▸ dusk</button></div>
   <div id="stats"></div>
