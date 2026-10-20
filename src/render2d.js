@@ -248,6 +248,69 @@ export function createView2D(sim, canvas) {
   base.width = Math.ceil(W * BASE_LEVEL); base.height = Math.ceil(H * BASE_LEVEL);
   drawMap(base.getContext('2d'), BASE_LEVEL, 0, 0, W, H, feats);
 
+  // ---------------------------------------------------------------- beyond the map edge
+  // The playable map is a hard rectangle. Around it we draw a muted "beyond" band so the city seems to carry on and fade out:
+  // the base map mirrored across each edge (streets that hit the edge continue as their reflection, so the join is seamless),
+  // desaturated and slightly blurred, under a haze of the background colour that thickens with distance (with a noisy
+  // falloff, so it does not end in a straight line). The same haze also creeps a short way inside the edge (EDGE_IN), so
+  // the crisp map melts into the band. Built once, at startup, into one canvas `outer` covering [-EDGE, W+EDGE] x [-EDGE, H+EDGE];
+  // the frame draws only the visible part of it, on top of the map tiles, and only when the view is near an edge.
+  const EDGE = 480, EDGE_IN = 140, EDGE_A0 = 0.38, CAM_EDGE = 260; // band width, inner haze width, haze at the edge, camera slack
+  const OR = Math.max(1, Math.round(EDGE * Math.min(BASE_LEVEL, 2400 / (W + 2 * EDGE)))) / EDGE; // outer px per metre, EDGE*OR integer
+  const outer = document.createElement('canvas');
+  outer.width = Math.ceil((W + 2 * EDGE) * OR); outer.height = Math.ceil((H + 2 * EDGE) * OR);
+  {
+    const o = outer.getContext('2d'), E = EDGE * OR, w = W * OR, h = H * OR;
+    o.fillStyle = COL.bg; o.fillRect(0, 0, outer.width, outer.height);
+    o.filter = 'saturate(0.45) blur(0.6px)'; // (ignored where ctx.filter is unsupported: still fine, just sharper)
+    o.imageSmoothingEnabled = true; o.imageSmoothingQuality = 'high';
+    for (let iy = -1; iy <= 1; iy++) for (let ix = -1; ix <= 1; ix++) {
+      if (!ix && !iy) continue;
+      // tile (ix, iy) shows the map reflected across the edge it touches: x -> -x (left), x -> 2W - x (right), same for y
+      o.save(); o.beginPath(); o.rect(E + ix * w, E - iy * h, w, h); o.clip();
+      o.translate(E + (ix < 0 ? 0 : ix > 0 ? 2 * w : 0), E + (iy > 0 ? 0 : iy < 0 ? 2 * h : 0));
+      o.scale(ix ? -1 : 1, iy ? -1 : 1);
+      o.drawImage(base, 0, 0, w, h);
+      o.restore();
+    }
+    o.filter = 'none';
+    o.clearRect(E, E, w, h); // the map itself is drawn crisp by the tiles; only its inner haze goes in here
+    // haze mask on a coarse grid (one cell per HZ metres), drawn smoothed on top: alpha 0 deep inside, EDGE_A0 at the edge,
+    // 1 at a noisy distance (0.55..0.95 EDGE) outside. Value noise on a 160 m lattice, fixed seed.
+    const HZ = 8, MW = Math.ceil((W + 2 * EDGE) / HZ) + 1, MH = Math.ceil((H + 2 * EDGE) / HZ) + 1;
+    const mc = document.createElement('canvas'); mc.width = MW; mc.height = MH;
+    const mctx = mc.getContext('2d'), img = mctx.createImageData(MW, MH), d = img.data;
+    const hsh = (i, j) => { let n = (i * 374761393 + j * 668265263) | 0; n = (n ^ (n >>> 13)) * 1274126177 | 0; return ((n ^ (n >>> 16)) >>> 0) / 4294967296; };
+    const vnoise = (x, y) => { const i = Math.floor(x), j = Math.floor(y), fx = x - i, fy = y - j, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+      const a = hsh(i, j), b = hsh(i + 1, j), c = hsh(i, j + 1), e = hsh(i + 1, j + 1); return a + (b - a) * u + (c - a) * v + (a - b - c + e) * u * v; };
+    const [br, bg, bb] = [1, 3, 5].map(k => parseInt(COL.bg.slice(k, k + 2), 16));
+    for (let r = 0; r < MH; r++) for (let q = 0; q < MW; q++) {
+      const x = q * HZ - EDGE, y = H + EDGE - r * HZ; // world coords of this mask cell (row 0 = top = north)
+      const ox = x < 0 ? -x : x > W ? x - W : 0, oy = y < 0 ? -y : y > H ? y - H : 0;
+      let a;
+      if (ox || oy) { // outside: Euclidean distance to the map rect, against a noisy fade length
+        const n = 0.65 * vnoise(x / 160, y / 160) + 0.35 * vnoise(x / 55 + 17, y / 55 + 5);
+        const t = Math.min(1, Math.hypot(ox, oy) / (EDGE * (0.55 + 0.4 * n)));
+        a = EDGE_A0 + (1 - EDGE_A0) * t * t * (3 - 2 * t);
+      } else { // inside: haze ramps from 0 (EDGE_IN deep) to EDGE_A0 at the edge
+        const t = Math.max(0, 1 - Math.min(x, W - x, y, H - y) / EDGE_IN);
+        a = EDGE_A0 * t * t * (3 - 2 * t);
+      }
+      const k = (r * MW + q) * 4; d[k] = br; d[k + 1] = bg; d[k + 2] = bb; d[k + 3] = Math.round(a * 255);
+    }
+    mctx.putImageData(img, 0, 0);
+    o.drawImage(mc, 0, 0, MW * HZ * OR, MH * HZ * OR);
+  }
+  // draw the visible part of `outer` (call with the map transform active); skipped when the view is well inside the map
+  function drawOuter() {
+    const x0 = wx(0), x1 = wx(vw), y0 = wy(vh), y1 = wy(0);
+    if (x0 > EDGE_IN && y0 > EDGE_IN && x1 < W - EDGE_IN && y1 < H - EDGE_IN) return;
+    const ox0 = Math.max(-EDGE, x0 - 8), ox1 = Math.min(W + EDGE, x1 + 8), oy0 = Math.max(-EDGE, y0 - 8), oy1 = Math.min(H + EDGE, y1 + 8);
+    if (ox1 <= ox0 || oy1 <= oy0) return;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(outer, (ox0 + EDGE) * OR, (H + EDGE - oy1) * OR, (ox1 - ox0) * OR, (oy1 - oy0) * OR, sx(ox0), sy(oy1), (ox1 - ox0) * cam.s, (oy1 - oy0) * cam.s);
+  }
+
   const tiles = new Map();
   function getTile(lvl, i, j, budget) {
     const key = lvl + ':' + i + ':' + j;
@@ -285,10 +348,11 @@ export function createView2D(sim, canvas) {
   const minScale = () => fitScale() * 0.6, MAX_SCALE = 10;
   function clampCam() {
     cam.s = clamp(cam.s, minScale(), MAX_SCALE);
-    // keep at least 30% of the screen (or of the map, if smaller) covered by the map
-    const mx = vw / 2 / cam.s, my = vh / 2 / cam.s, ox = 0.3 * Math.min(W, 2 * mx), oy = 0.3 * Math.min(H, 2 * my);
-    cam.x = clamp(cam.x, ox - mx, W - ox + mx);
-    cam.y = clamp(cam.y, oy - my, H - oy + my);
+    // don't show more than CAM_EDGE metres past the map edge; when the view is wider than that allows, keep the whole map
+    // in view instead (the two ranges meet at view width W + CAM_EDGE, so the limit is continuous while zooming)
+    const mx = vw / 2 / cam.s, my = vh / 2 / cam.s;
+    cam.x = clamp(cam.x, Math.min(mx - CAM_EDGE, W - mx), Math.max(W + CAM_EDGE - mx, mx));
+    cam.y = clamp(cam.y, Math.min(my - CAM_EDGE, H - my), Math.max(H + CAM_EDGE - my, my));
   }
   function resize() {
     dpr = Math.min(devicePixelRatio || 1, 2); vw = innerWidth; vh = innerHeight;
@@ -885,6 +949,7 @@ export function createView2D(sim, canvas) {
     if (!view.fxSource && !fx.nightOwned) fx.night = 1 - dayLight(); // FX hook: day/night tint
     fxRun(() => { fx.update(rdt, view.fxSource || sim); if (view.fxShake !== false) ctx.translate(fx.shake.x, fx.shake.y); }); // FX hook
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.save(); ctx.beginPath(); ctx.rect(sx(0), sy(H), W * cam.s, H * cam.s); ctx.clip(); // edge tiles overhang the map: clip them
     ctx.drawImage(base, sx(0), sy(H), W * cam.s, H * cam.s);
     const want = cam.s * dpr;
     if (want > BASE_LEVEL * 1.25) {
@@ -903,6 +968,8 @@ export function createView2D(sim, canvas) {
       }
       view.pendingTiles = budget.n <= 0;
     } else view.pendingTiles = false;
+    ctx.restore();
+    drawOuter(); // the muted city beyond the edge, and the haze that blends the map into it
     if (view.showNav) {
       if (!navCanvas) buildNavCanvas();
       ctx.imageSmoothingEnabled = false;
