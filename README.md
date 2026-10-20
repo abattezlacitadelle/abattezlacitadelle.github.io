@@ -2,9 +2,9 @@
 
 > **Avertissement / Disclaimer**
 >
-> Œuvre de fiction. Ce jeu est une simulation imaginaire : toute ressemblance avec des lieux, des personnes, des commerces ou des événements existants ou ayant existé serait purement fortuite. Le fait de devoir recourir à des dégradations pour gagner ne doit en aucun cas être compris comme un encouragement à commettre des dégradations.
+> Œuvre de fiction. Ce jeu est une simulation imaginaire : toute ressemblance avec des lieux, des personnes, des commerces ou des événements existants ou ayant existé serait purement fortuite. Le fait de devoir recourir à des dégradations pour gagner ne doit en aucun cas être compris comme un encouragement à commettre des dégradations. Ce jeu condamne toutes les violences, qu'elles viennent des manifestants ou des forces de l'ordre, et ne cherche en aucun cas à les banaliser : dans la réalité, elles font des victimes et laissent des séquelles graves.
 >
-> A work of fiction. This game is an imaginary simulation: any resemblance to real places, people, businesses or events, past or present, is purely coincidental. Having to resort to property damage to win must not be taken as encouragement to damage property.
+> A work of fiction. This game is an imaginary simulation: any resemblance to real places, people, businesses or events, past or present, is purely coincidental. Having to resort to property damage to win must not be taken as encouragement to damage property. This game condemns all violence, whether by protesters or by the police, and in no way seeks to trivialize it: in real life, violence causes victims and lasting harm.
 
 A top-down strategy game set in a fictional city. You lead a protest movement for seven days. Your leaders nudge their marches through the city streets toward the Élysée, while an organised police force blocks, cordons, kettles, gasses and arrests. Uncontrolled riots, looting, fires and brawls play out around you. Each person is simulated as an agent in a fluid-like crowd: about 3,000 people and 6 to 9 police squads.
 
