@@ -78,12 +78,12 @@ function squadBar(ctx, mx, my, lx, ly, fx, fy, half, s, charge) {
   ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx + fx * 9, my + fy * 9); ctx.stroke();
 }
 // police label box (CRS n · state · TACTIC) with the energy bar; returns nothing
-function policeTag(ctx, t, X, by, w, h, charge, energy) {
-  const bx = X - w / 2;
+function policeTag(ctx, t, X, by, w, h, charge, energy, fs = 10) {
+  const bx = X - w / 2, bh = fs < 10 ? 1.5 : 2;
   ctx.fillStyle = charge ? 'rgba(60,90,190,.92)' : 'rgba(20,32,64,.88)'; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx, by, w, h, 3) : ctx.rect(bx, by, w, h); ctx.fill();
-  ctx.fillStyle = '#dbe6ff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '600 10px system-ui,Segoe UI,sans-serif'; ctx.fillText(t, X, by + 7);
-  ctx.fillStyle = '#333a4a'; ctx.fillRect(bx + 4, by + h - 3.5, w - 8, 2);
-  ctx.fillStyle = '#8fb3ff'; ctx.fillRect(bx + 4, by + h - 3.5, (w - 8) * clamp((energy ?? 100) / 100, 0, 1), 2);
+  ctx.fillStyle = '#dbe6ff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `600 ${fs}px system-ui,Segoe UI,sans-serif`; ctx.fillText(t, X, by + (h - bh - 1.5) / 2 + 0.5);
+  ctx.fillStyle = '#333a4a'; ctx.fillRect(bx + 4, by + h - bh - 1.5, w - 8, bh);
+  ctx.fillStyle = '#8fb3ff'; ctx.fillRect(bx + 4, by + h - bh - 1.5, (w - 8) * clamp((energy ?? 100) / 100, 0, 1), bh);
 }
 // gas concentration a (0..1) -> rgba of the tear-gas cloud
 // ------------------------------------------------------------------ police intent primitives (overlay + legend), screen px
@@ -157,8 +157,27 @@ function intentDest(c, X0, Y0, X1, Y1, transit) {
   c.beginPath(); c.arc(X1, Y1, 4.5, 0, 6.283); c.fillStyle = '#fff'; c.fill(); c.lineWidth = 2; c.stroke();
 }
 
-const GASC = [0, 0, 0, 0];
-const gasRGBA = (a, o = GASC) => { o[0] = 214 - a * 50; o[1] = 226 - a * 40; o[2] = 150 - a * 70; o[3] = 70 + a * 150; return o; };
+// Tear gas colour ramp (shared with the legend). a = 0..1 (sqrt-scaled concentration), L = daylight 0..1.
+// Thin gas = saturated sickly yellow-green (reads as a darker olive fringe on the beige map), thick gas = pale
+// grey-green haze, fairly opaque but capped so agents under it still show. The fringe fades in smoothly.
+const GASC = [0, 0, 0, 0], GAS_LO = [126, 156, 14], GAS_HI = [196, 212, 112];
+const gasRGBA = (a, o = GASC, L = 1, boost = 1) => {
+  const k = a * a * (3 - 2 * a), d = 0.62 + 0.38 * L;
+  o[0] = (GAS_LO[0] + (GAS_HI[0] - GAS_LO[0]) * k) * d; o[1] = (GAS_LO[1] + (GAS_HI[1] - GAS_LO[1]) * k) * d; o[2] = (GAS_LO[2] + (GAS_HI[2] - GAS_LO[2]) * k) * d;
+  o[3] = Math.min(235, 255 * (0.44 + 0.26 * a) * Math.min(1, a / 0.25) * boost); return o;
+};
+// soft billowing tear-gas puff sprite: a few offset lobes, pale grey-green core, yellow-green rim
+function gasPuffSprite(seed) {
+  const S = 64, c = document.createElement('canvas'); c.width = c.height = S; const g = c.getContext('2d');
+  let r = seed * 9301 + 49297; const rnd = () => ((r = (r * 9301 + 49297) % 233280) / 233280);
+  for (let k = 0; k < 6; k++) {
+    const a = rnd() * 6.283, d = k ? S * (0.1 + 0.12 * rnd()) : 0, x = S / 2 + Math.cos(a) * d, y = S / 2 + Math.sin(a) * d, R = S * (k ? 0.2 + 0.1 * rnd() : 0.32);
+    const gr = g.createRadialGradient(x, y, 0, x, y, R);
+    gr.addColorStop(0, 'rgba(212,222,150,0.6)'); gr.addColorStop(0.55, 'rgba(176,198,64,0.45)'); gr.addColorStop(1, 'rgba(130,158,20,0)');
+    g.fillStyle = gr; g.beginPath(); g.arc(x, y, R, 0, 6.283); g.fill();
+  }
+  return c;
+}
 
 export function createView2D(sim, canvas) {
   const D = sim.data, W = sim.W, H = sim.H;
@@ -310,32 +329,48 @@ export function createView2D(sim, canvas) {
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(densCanvas, sx(i0 * dc), sy((j1 + 1) * dc), w * dc * cam.s, h * dc * cam.s);
   }
-  // tear gas grid
-  const gasCanvas = document.createElement('canvas');
+  // tear gas grid: 1 px per 6 m cell -> blurred mid-res canvas (K px per cell) -> screen, so the cloud is soft, not blocky
+  const gasCanvas = document.createElement('canvas'), gasMid = document.createElement('canvas'), GPAD = 2;
   function drawGas() {
     const box = sim.gasBox; if (!box) return;
-    const { gas, GCOLS, GC } = sim, w = box.x1 - box.x0 + 1, h = box.y1 - box.y0 + 1;
+    const { gas, GCOLS, GC } = sim, w = box.x1 - box.x0 + 1 + GPAD * 2, h = box.y1 - box.y0 + 1 + GPAD * 2, L = dayLight();
+    const far = cam.s < 0.6, gk = far ? 0.35 : 0.8, boost = far ? 1.3 : 1; // zoomed out: thin gas reads stronger so a small cloud still shows
     if (gasCanvas.width !== w || gasCanvas.height !== h) { gasCanvas.width = w; gasCanvas.height = h; }
     const gctx = gasCanvas.getContext('2d'), img = gctx.createImageData(w, h), d = img.data;
     for (let j = box.y0; j <= box.y1; j++) for (let i = box.x0; i <= box.x1; i++) {
-      const g = gas[j * GCOLS + i]; if (g < 0.01) continue;
-      const o = ((box.y1 - j) * w + (i - box.x0)) * 4, a = Math.min(1, Math.sqrt(g / 0.8)), c = gasRGBA(a);
+      const g = gas[j * GCOLS + i]; if (g < 0.006) continue;
+      const o = ((box.y1 - j + GPAD) * w + (i - box.x0 + GPAD)) * 4, c = gasRGBA(Math.min(1, Math.sqrt(g / gk)), GASC, L, boost);
       d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = c[3];
     }
     gctx.putImageData(img, 0, 0);
+    // upscale with a blur into a bounded mid-res canvas (cost independent of zoom), then stretch that to the screen
+    const K = Math.max(2, Math.min(6, Math.floor(600 / Math.max(w, h)), Math.ceil(GC * cam.s)));
+    if (gasMid.width !== w * K || gasMid.height !== h * K) { gasMid.width = w * K; gasMid.height = h * K; }
+    const m = gasMid.getContext('2d');
+    m.clearRect(0, 0, gasMid.width, gasMid.height); m.imageSmoothingEnabled = true;
+    if (view.gasBlur !== false) m.filter = `blur(${(K * (far ? 1 : 0.6)).toFixed(1)}px)`; m.drawImage(gasCanvas, 0, 0, w * K, h * K); m.filter = 'none';
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(gasCanvas, sx(box.x0 * GC), sy((box.y1 + 1) * GC), w * GC * cam.s, h * GC * cam.s);
+    if (far) { ctx.save(); ctx.shadowColor = `rgba(${70 + 30 * L | 0},${90 + 30 * L | 0},0,0.85)`; ctx.shadowBlur = 7; } // zoomed out: soft olive halo so the cloud pops
+    ctx.drawImage(gasMid, sx((box.x0 - GPAD) * GC), sy((box.y1 + 1 + GPAD) * GC), w * GC * cam.s, h * GC * cam.s);
+    if (far) ctx.restore();
   }
+  // drifting puffs (simulated in gas.js): billowing sprites with a minimum screen size, so they read at overview zoom too
+  const PUFF_SPR = [1, 2, 3].map(gasPuffSprite);
   function drawPuffs() {
     const { pX, pY, pSize, pAlpha, NP } = sim;
-    if (!NP || cam.s < 0.5) return;
-    ctx.fillStyle = '#e4ebc0';
-    for (let i = 0; i < NP; i++) {
-      const X = sx(pX[i]), Y = sy(pY[i]), r = pSize[i] * 0.5 * cam.s;
+    if (!NP) return;
+    const far = cam.s < 0.5, step = far && NP > 120 ? 2 : 1, minR = far ? 11 : 5, t = performance.now() / 1000, L = dayLight();
+    ctx.save();
+    if (L < 0.95) ctx.filter = `brightness(${(0.62 + 0.38 * L).toFixed(2)})`;
+    for (let i = 0; i < NP; i += step) {
+      const a = pAlpha[i]; if (a < 0.01) continue;
+      const X = sx(pX[i]), Y = sy(pY[i]), wob = 1 + 0.08 * Math.sin(t * 0.9 + i * 1.7);
+      const r = Math.max(minR, pSize[i] * 0.55 * cam.s) * wob * (step > 1 ? 1.25 : 1);
       if (X < -r || Y < -r || X > vw + r || Y > vh + r) continue;
-      ctx.globalAlpha = pAlpha[i] * 0.7; ctx.beginPath(); ctx.arc(X, Y, r, 0, 6.283); ctx.fill();
+      ctx.globalAlpha = Math.min(0.7, a * (far ? 2.6 : 2.1));
+      ctx.drawImage(PUFF_SPR[i % 3], X - r, Y - r, r * 2, r * 2);
     }
-    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 
   // agents, batched by colour. Buckets: 0..9 leader colours, 10 idle, 11 panic, 12 wild (riot, no leader),
@@ -644,19 +679,32 @@ export function createView2D(sim, canvas) {
     }
   }
   const squadText = sq => `CRS ${sq.id} · ${inTransit(sq) ? 'by van' : sq.state}` + (sq.tactic ? ` · ${String(sq.tactic).toUpperCase()}` : '');
+  // squad labels: kept behind the line and out of the fight. Zoomed out they shrink to a compact "CRS n" tag (and are
+  // dropped rather than stacked when they collide); over gas or flying projectiles they fade, unless the cursor is on them.
+  const gasAt = (x, y) => { const { gas, GCOLS, GC } = sim; if (!gas) return 0; const i = Math.floor(x / GC), j = Math.floor(y / GC); return i > 0 && j > 0 && i < GCOLS - 1 ? gas[j * GCOLS + i] || 0 : 0; };
   function drawPoliceLabels() {
     if (cam.s < 0.25) return;
+    const compact = cam.s < 0.6, cur = view.cursor, busyR = 40 / cam.s;
     for (const sq of sim.squads) {
-      const adv = sq.adv || 0, x = sq.x + sq.dx * adv, y = sq.y + sq.dy * adv, off = Math.max(22, 4.5 * cam.s + 10);
+      const adv = sq.adv || 0, x = sq.x + sq.dx * adv, y = sq.y + sq.dy * adv, off = compact ? 30 : Math.max(30, 4.5 * cam.s + 16);
       let X = sx(x) - sq.dx * off, Y = sy(y) + sq.dy * off; // behind the line
-      if (inTransit(sq)) { X = sx(sq.x); Y = sy(sq.y) - Math.max(22, 2.6 * cam.s + 16); } // above the vans, not on them
+      if (inTransit(sq)) { X = sx(sq.x); Y = sy(sq.y) - Math.max(20, 2.6 * cam.s + 16); } // above the vans, not on them
       if (X < -60 || Y < -30 || X > vw + 60 || Y > vh + 30) continue;
-      const t = squadText(sq);
-      ctx.font = '600 10px system-ui,Segoe UI,sans-serif'; const w = ctx.measureText(t).width + 10, h = 16;
+      const charge = sq.state === 'charge';
+      // over gas / flying projectiles: the short tag, faded (full text again under the cursor)
+      const hov0 = cur.ok && Math.hypot(sx(cur.x) - X, sy(cur.y) - Y) < 60;
+      const busy = !hov0 && (gasAt(wx(X), wy(Y)) > 0.03 || gasAt(x, y) > 0.08 || (fxOn && fx.busyAt && fx.busyAt(wx(X), wy(Y), busyR)));
+      const short = compact || busy;
+      const t = short ? `CRS ${sq.id}` + (charge ? ' ▶' : inTransit(sq) ? ' · van' : '') : squadText(sq);
+      const fs = short ? 9 : 10, h = short ? 13 : 16;
+      ctx.font = `600 ${fs}px system-ui,Segoe UI,sans-serif`; const w = ctx.measureText(t).width + (compact ? 8 : 10);
       const bx = X - w / 2; let by = Y - h / 2;
-      for (let tries = 0; tries < 4 && hits(bx, by, bx + w, by + h); tries++) by += sq.dy <= 0 ? h + 3 : -(h + 3); // dodge other labels
+      for (let tries = 0; tries < (compact ? 0 : 4) && hits(bx, by, bx + w, by + h); tries++) by += sq.dy <= 0 ? h + 3 : -(h + 3); // dodge other labels
+      if (short && !hov0 && hits(bx, by, bx + w, by + h)) continue; // fewer labels instead of a stack over the fight
       placed.push([bx, by, bx + w, by + h]);
-      policeTag(ctx, t, X, by, w, h, sq.state === 'charge', sq.energy);
+      ctx.globalAlpha = hov0 ? 1 : busy ? 0.45 : compact ? 0.85 : 0.92;
+      policeTag(ctx, t, X, by, w, h, charge, sq.energy, fs);
+      ctx.globalAlpha = 1;
     }
   }
   function drawScaleBar() {
@@ -788,7 +836,9 @@ export function createView2D(sim, canvas) {
       case 'fire': if (lfx) lfx.fire(c, cx, cy + 2, 6); break;
       case 'smoke': if (lfx) lfx.smoke(c, arg || 'dark', cx, cy, 10); break;
       case 'gas': {
-        for (const [dx, dy, r, a] of [[-6, 1, 9, 0.35], [5, -2, 8, 0.6], [1, 3, 5, 0.9]]) { const g = gasRGBA(a, [0, 0, 0, 0]); c.fillStyle = `rgba(${g[0] | 0},${g[1] | 0},${g[2] | 0},${(g[3] / 255).toFixed(2)})`; c.beginPath(); c.arc(cx + dx, cy + dy, r, 0, 6.283); c.fill(); }
+        c.filter = 'blur(1.5px)';
+        for (const [dx, dy, r, a] of [[-7, 1, 10, 0.3], [5, -1, 9, 0.55], [1, 2, 6, 1]]) { const g = gasRGBA(a, [0, 0, 0, 0]); c.fillStyle = `rgba(${g[0] | 0},${g[1] | 0},${g[2] | 0},${(g[3] / 255).toFixed(2)})`; c.beginPath(); c.arc(cx + dx, cy + dy, r, 0, 6.283); c.fill(); }
+        c.filter = 'none'; c.globalAlpha = 0.6; c.drawImage(PUFF_SPR[0], cx + 2, cy - 13, 16, 16); c.globalAlpha = 1;
         break;
       }
       case 'prop': if (lfx) lfx.prop(c, 'car', arg || 'burnt', cx, cy, 4, 0.3); break;

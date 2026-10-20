@@ -21,7 +21,7 @@
 // Height cue: an object at height z is drawn ZK*z metres "up-screen" from its ground point, with a shadow on the ground.
 
 const TAU = Math.PI * 2;
-const MAXP = 6000, MAXDEC = 1400, MAXBURST = 400, TRAIL_N = 48;
+const MAXP = 6000, MAXDEC = 1400, MAXBURST = 400, TRAIL_N = 48, GHOST_T = 1.1; // GHOST_T: trail fade-out after landing (s)
 const ZK = 0.75;
 const DEFAULT_WIND = { x: 0.35, y: 0.12 };
 
@@ -35,16 +35,20 @@ const SPARK_CSS = ['#fff1a8', '#ff7a12', '#ff2d2d', '#3dff6e', '#3fd8ff', '#ff3f
 const SPARK_RGB = [[255, 241, 168], [255, 122, 18], [255, 45, 45], [61, 255, 110], [63, 216, 255], [255, 63, 210], [255, 194, 26], [255, 255, 255], [79, 141, 255]];
 const FW_COLS = [C_RED, C_GREEN, C_CYAN, C_MAGENTA, C_GOLD, C_BLUE];
 
-const KIND = { // trail styles (maxAge s, width px, rgb, alpha)
-  rock: { age: 0.55, w: 1.2, c: '96,92,86', a: 0.6 },
-  paving: { age: 0.6, w: 1.4, c: '86,82,78', a: 0.65 },
-  bottle: { age: 0.7, w: 1.3, c: '40,140,70', a: 0.65 },
-  molotov: { age: 1.3, w: 3.2, c: '60,52,46', a: 0.45 },
-  firework: { age: 1.0, w: 2.4, c: '255,255,255', a: 0.95 },
-  gas: { age: 1.8, w: 3.4, c: '250,250,250', a: 0.9 },
-  lbd: { age: 0.11, w: 1.8, c: '255,236,140', a: 1 },
-  flashbang: { age: 0.6, w: 1.0, c: '40,40,48', a: 0.45 },
+const KIND = { // trail styles (maxAge s, width px, rgb, alpha); longer, wider and stronger so throws read at overview zoom
+  rock: { age: 0.95, w: 1.8, c: '72,68,62', a: 0.8 },
+  paving: { age: 1.0, w: 2.0, c: '64,60,56', a: 0.82 },
+  bottle: { age: 1.0, w: 1.8, c: '24,150,68', a: 0.85 },
+  molotov: { age: 1.6, w: 3.4, c: '60,52,46', a: 0.55 },
+  firework: { age: 1.3, w: 2.6, c: '255,255,255', a: 0.95 },
+  gas: { age: 2.6, w: 4.2, c: '222,230,170', a: 0.95 }, // tear-gas smoke: pale yellow-green over an olive under-stroke
+  lbd: { age: 0.3, w: 2.2, c: '255,236,140', a: 1 },
+  flashbang: { age: 0.9, w: 1.6, c: '40,40,48', a: 0.6 },
 };
+// who threw it: crowd = orange, police = blue (glow halo around heads when zoomed out, landing pops)
+const OWNER_RGB = { C: '255,122,18', P: '79,141,255' };
+const POLICE_KINDS = new Set(['gas', 'lbd', 'flashbang']);
+const ownerOf = (o, kind) => o === 'P' || o === 'C' ? o : POLICE_KINDS.has(kind) ? 'P' : 'C';
 
 // exported so other views / the legend can reuse the exact colours
 export const FX_PALETTE = { trail: KIND, spark: SPARK_CSS };
@@ -118,16 +122,17 @@ export function createFX2D() {
   const SMOKE_SPR = [
     [0, 1, 2].map(i => puff(64, [44, 40, 37], null, i + 1)),
     [0, 1, 2].map(i => puff(64, [118, 114, 108], null, i + 11)),
-    [0, 1, 2].map(i => puff(64, [246, 248, 250], [150, 158, 165], i + 21)),
+    [0, 1, 2].map(i => puff(64, [222, 230, 176], [128, 150, 30], i + 21)),
     [0, 1, 2].map(i => puff(64, [196, 178, 146], null, i + 31)),
   ];
-  const SMOKE_A = [0.72, 0.66, 0.95, 0.7];
+  const SMOKE_A = [0.72, 0.66, 1, 0.7];
   const FLAME = radial(64, [[0, 'rgba(255,252,225,1)'], [0.22, 'rgba(255,224,110,0.98)'], [0.5, 'rgba(255,128,20,0.78)'], [0.78, 'rgba(210,45,8,0.32)'], [1, 'rgba(160,20,0,0)']]);
   const FLAME_DARK = radial(64, [[0, 'rgba(120,20,0,0.55)'], [0.6, 'rgba(90,15,0,0.28)'], [1, 'rgba(60,10,0,0)']]);
   const GLOW = SPARK_RGB.map(([r, g, b]) => radial(32, [[0, `rgba(${r},${g},${b},1)`], [0.25, `rgba(${r},${g},${b},0.7)`], [1, `rgba(${r},${g},${b},0)`]]));
   const LIGHT = radial(128, [[0, 'rgba(255,170,60,0.9)'], [0.35, 'rgba(255,120,30,0.45)'], [1, 'rgba(255,90,20,0)']]);
   const FLASH = radial(128, [[0, 'rgba(255,255,255,1)'], [0.3, 'rgba(255,248,215,0.9)'], [0.65, 'rgba(255,200,110,0.35)'], [1, 'rgba(255,170,60,0)']]);
   const WFLASH = radial(128, [[0, 'rgba(255,255,255,1)'], [0.45, 'rgba(240,248,255,0.8)'], [1, 'rgba(220,235,255,0)']]);
+  const GAS_GLOW = radial(32, [[0, 'rgba(214,224,120,1)'], [0.4, 'rgba(180,200,70,0.7)'], [1, 'rgba(150,172,34,0)']]);
   const SHADOW = radial(32, [[0, 'rgba(0,0,0,0.55)'], [0.6, 'rgba(0,0,0,0.3)'], [1, 'rgba(0,0,0,0)']]);
   const DEC_SPR = [scorchSprite(1), scorchSprite(2), scorchSprite(3), glassSprite(1), glassSprite(2), debrisSprite(1), debrisSprite(2)];
   const D_SCORCH = 0, D_GLASS = 3, D_DEBRIS = 5;
@@ -280,7 +285,8 @@ export function createFX2D() {
         if (s >= 1.2) burst({ k: 'swish', x, y, a: Math.atan2(e.ty != null ? e.ty - y : R() - 0.5, e.tx != null ? e.tx - x : R() - 0.5), dur: 0.22, owner: e.owner });
         return;
       case 'gas':
-        if (o.smoke) { emitters.push({ x, y, t: 0, dur: 5, acc: 0 }); if (emitters.length > 60) emitters.shift(); burstDir(P_SMOKE, S_GAS, x, y, 6, 1, 4, 2, 4, 1.2, 1.6, 1.2, 2); }
+        if (o.smoke) { emitters.push({ x, y, t: 0, dur: 7, acc: 0 }); if (emitters.length > 60) emitters.shift(); burstDir(P_SMOKE, S_GAS, x, y, 8, 1, 4, 2, 4, 1.4, 1.8, 1.2, 2); }
+        if (o.explosions) burst({ k: 'pop', x, y, dur: 0.9, kind: 'gas', owner: 'P' });
         return;
     }
   }
@@ -327,10 +333,10 @@ export function createFX2D() {
       let tr = trails.get(id);
       if (!tr || tr.dead) {
         tr = { id, kind: p.kind, n: 0, head: 0, xs: new Float32Array(TRAIL_N), ys: new Float32Array(TRAIL_N), zs: new Float32Array(TRAIL_N), ts: new Float32Array(TRAIL_N),
-          dead: false, deadT: 0, col: FW_COLS[(hash(id | 0) * FW_COLS.length) | 0], acc: 0, x: p.x, y: p.y, z: p.z || 0, vx: 0, vy: 0 };
+          dead: false, deadT: 0, col: FW_COLS[(hash(id | 0) * FW_COLS.length) | 0], acc: 0, x: p.x, y: p.y, z: p.z || 0, vx: 0, vy: 0, owner: 'C' };
         trails.set(id, tr);
       }
-      tr.seen = true; tr.kind = p.kind;
+      tr.seen = true; tr.kind = p.kind; tr.owner = ownerOf(p.owner, p.kind);
       const z = p.z || 0, lx = tr.x, ly = tr.y + tr.z * ZK;
       tr.x = p.x; tr.y = p.y; tr.z = z; tr.vx = p.vx || 0; tr.vy = p.vy || 0;
       const hx = p.x, hy = p.y + z * ZK;
@@ -353,14 +359,18 @@ export function createFX2D() {
           emit(P_SPARK, R() < 0.35 ? C_HOT : tr.col, hx, hy, Math.cos(a) * v - tr.vx * 0.15, Math.sin(a) * v - tr.vy * 0.15, rr(0.25, 0.6), 0.5, 0, 2); }
       } else if (p.kind === 'gas') {
         tr.acc += moved * quality;
-        while (tr.acc > 1.1) { tr.acc -= 1.1; const f = R(); if (o.smoke) emit(P_SMOKE, S_GAS, lx + (hx - lx) * f, ly + (hy - ly) * f, rr(-0.4, 0.4), rr(-0.4, 0.4), rr(1.5, 2.6), 0.9, 1.3, 0.3, 2); }
+        while (tr.acc > 0.8) { tr.acc -= 0.8; const f = R(); if (o.smoke) emit(P_SMOKE, S_GAS, lx + (hx - lx) * f, ly + (hy - ly) * f, rr(-0.4, 0.4), rr(-0.4, 0.4), rr(2.2, 3.4), 1.0, 1.4, 0.3, 2); }
       }
     }
     for (const [id, tr] of trails) {
       if (tr.seen) continue;
-      if (!tr.dead) { tr.dead = true; tr.deadT = 0; }
+      if (!tr.dead) { // landed: a brief pop at the landing point (screen-min size, so it shows at overview zoom)
+        tr.dead = true; tr.deadT = 0;
+        if (o.explosions && tr.kind !== 'molotov' && tr.kind !== 'firework' && tr.kind !== 'flashbang' && tr.kind !== 'gas' && visible(tr.x, tr.y, 10))
+          burst({ k: 'pop', x: tr.x, y: tr.y, dur: 0.6, kind: tr.kind, owner: tr.owner });
+      }
       tr.deadT += dt;
-      if (tr.deadT > 0.7) trails.delete(id);
+      if (tr.deadT > GHOST_T) trails.delete(id);
     }
 
     // fires
@@ -570,7 +580,7 @@ export function createFX2D() {
     if (o.smoke) {
       for (let i = 0; i < NP; i++) {
         if (TYPE[i] !== P_SMOKE) continue;
-        const Xs = sx(X[i]), Ys = sy(Y[i]), r = Math.max(1.5, SIZE[i] * S);
+        const Xs = sx(X[i]), Ys = sy(Y[i]), r = Math.max(COL[i] === S_GAS ? 4.5 : 1.5, SIZE[i] * S);
         if (!onScreen(Xs, Ys, r)) continue;
         const t = LIFE[i] / MAXL[i], a = Math.min(1, t * 7) * Math.pow(1 - t, 0.75) * SMOKE_A[COL[i]];
         if (a < 0.01) continue;
@@ -634,6 +644,13 @@ export function createFX2D() {
         ctx.beginPath(); ctx.arc(Xs, Ys, r, 0, TAU);
         if (b.dark) { ctx.globalAlpha = a * 0.5; ctx.strokeStyle = 'rgb(40,30,20)'; ctx.lineWidth = w + 2.5; ctx.stroke(); }
         ctx.globalAlpha = a; ctx.strokeStyle = `rgb(${b.col})`; ctx.lineWidth = w; ctx.stroke();
+      } else if (b.k === 'pop') { // landing: owner-coloured ring + small glow, min screen size
+        const gasPop = b.kind === 'gas', e = 1 - (1 - u) * (1 - u), r = Math.max(4 + 9 * e, (0.5 + (gasPop ? 4 : 2) * e) * S); if (!onScreen(Xs, Ys, r)) continue;
+        const col = gasPop ? '150,172,34' : OWNER_RGB[b.owner] || OWNER_RGB.C, a = 1 - u;
+        ctx.globalAlpha = a * 0.45; ctx.drawImage(gasPop ? GAS_GLOW : GLOW[b.owner === 'P' ? C_BLUE : C_ORANGE], Xs - r * 0.8, Ys - r * 0.8, r * 1.6, r * 1.6);
+        ctx.beginPath(); ctx.arc(Xs, Ys, r, 0, TAU);
+        ctx.globalAlpha = a * 0.5; ctx.strokeStyle = 'rgb(30,26,22)'; ctx.lineWidth = 3.2; ctx.stroke();
+        ctx.globalAlpha = a; ctx.strokeStyle = `rgb(${col})`; ctx.lineWidth = 1.8; ctx.stroke();
       } else if (b.k === 'swish') {
         if (!onScreen(Xs, Ys, 20)) continue;
         const r = Math.max(5, 1.4 * S), a0 = -b.a - 1.2 + u * 1.6;
@@ -663,8 +680,8 @@ export function createFX2D() {
         ctx.moveTo(seg[o], seg[o + 1]); ctx.lineTo(seg[o + 2], seg[o + 3]); any = true;
       }
       if (!any) continue;
-      const fa = (1 - b / BANDS) * ghost, w = Math.max(0.8, ks.w * (1 - b / BANDS * 0.5) * Math.min(1.6, Math.max(0.7, zoomS / 2.2)));
-      if (isGas) { ctx.globalAlpha = fa * 0.5; ctx.strokeStyle = 'rgb(120,128,136)'; ctx.lineWidth = w + 2; ctx.stroke(); }
+      const fa = (1 - b / BANDS) * ghost, w = Math.max(1.6, ks.w * (1 - b / BANDS * 0.5) * Math.min(1.6, Math.max(0.9, zoomS / 2.2)));
+      if (isGas) { ctx.globalAlpha = fa * 0.6; ctx.strokeStyle = 'rgb(118,138,28)'; ctx.lineWidth = w + 2.4; ctx.stroke(); }
       if (isFw || isLbd) { ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = fa * 0.6; ctx.strokeStyle = `rgb(${rgb})`; ctx.lineWidth = w * 2.8; ctx.stroke(); ctx.globalCompositeOperation = 'source-over'; }
       if (isFw) { ctx.globalAlpha = fa * 0.6; ctx.strokeStyle = 'rgba(40,20,40,1)'; ctx.lineWidth = w + 1.6; ctx.stroke(); }
       ctx.globalAlpha = fa * ks.a; ctx.strokeStyle = `rgb(${rgb})`; ctx.lineWidth = w; ctx.stroke();
@@ -677,13 +694,13 @@ export function createFX2D() {
   function drawHead(ctx, k, gx, hy, base, colIdx, seed) {
     switch (k) {
       case 'rock': case 'paving': {
-        const r = Math.max(1.8, 0.22 * base);
+        const r = Math.max(2.4, 0.22 * base);
         ctx.fillStyle = '#2b2926'; ctx.beginPath(); ctx.arc(gx, hy, r + 0.8, 0, TAU); ctx.fill();
         ctx.fillStyle = k === 'paving' ? '#9a948a' : '#7d7871'; ctx.beginPath();
         if (k === 'paving') ctx.rect(gx - r, hy - r, r * 2, r * 2); else ctx.arc(gx, hy, r, 0, TAU); ctx.fill(); break;
       }
       case 'bottle': {
-        const r = Math.max(1.8, 0.2 * base);
+        const r = Math.max(2.4, 0.2 * base);
         ctx.fillStyle = '#123d22'; ctx.beginPath(); ctx.arc(gx, hy, r + 0.8, 0, TAU); ctx.fill();
         ctx.fillStyle = '#2fb35a'; ctx.beginPath(); ctx.arc(gx, hy, r, 0, TAU); ctx.fill();
         const g = 0.5 + 0.5 * Math.sin(T * 25 + seed); ctx.fillStyle = `rgba(255,255,255,${0.5 + 0.5 * g})`; ctx.fillRect(gx - r * 0.5, hy - r * 0.6, Math.max(1, r * 0.6), Math.max(1, r * 0.6)); break;
@@ -699,17 +716,17 @@ export function createFX2D() {
         ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(gx, hy, Math.max(1.5, 0.18 * base), 0, TAU); ctx.fill(); break;
       }
       case 'gas': {
-        const r = Math.max(1.8, 0.2 * base);
+        const r = Math.max(2.6, 0.2 * base);
         ctx.fillStyle = '#2b3138'; ctx.beginPath(); ctx.arc(gx, hy, r + 0.9, 0, TAU); ctx.fill();
-        ctx.fillStyle = '#b8c0c8'; ctx.beginPath(); ctx.arc(gx, hy, r, 0, TAU); ctx.fill(); break;
+        ctx.fillStyle = '#c9d48a'; ctx.beginPath(); ctx.arc(gx, hy, r, 0, TAU); ctx.fill(); break;
       }
       case 'lbd': {
-        const r = Math.max(3, 0.5 * base);
+        const r = Math.max(4, 0.5 * base);
         ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(GLOW[C_HOT], gx - r, hy - r, r * 2, r * 2); ctx.globalCompositeOperation = 'source-over';
         ctx.fillStyle = '#fff'; ctx.fillRect(gx - 1, hy - 1, 2, 2); break;
       }
       case 'flashbang': {
-        const r = Math.max(1.8, 0.18 * base);
+        const r = Math.max(2.4, 0.18 * base);
         ctx.fillStyle = '#16181c'; ctx.beginPath(); ctx.arc(gx, hy, r, 0, TAU); ctx.fill();
         if (Math.sin(T * 30) > 0) { ctx.fillStyle = '#ff4040'; ctx.fillRect(gx - 0.8, hy - 0.8, 1.6, 1.6); } break;
       }
@@ -721,7 +738,7 @@ export function createFX2D() {
     // trails, in alpha bands to keep the stroke count low
     if (fx.opts.trails) for (const tr of trails.values()) {
       const ks = KIND[tr.kind] || KIND.rock, n = tr.n; if (n < 2) continue;
-      const ghost = tr.dead ? Math.max(0, 1 - tr.deadT / 0.7) : 1;
+      const ghost = tr.dead ? Math.max(0, 1 - tr.deadT / GHOST_T) : 1;
       const last = (tr.head + TRAIL_N - 1) % TRAIL_N;
       if (!onScreen(sx(tr.xs[last]), sy(tr.ys[last]), 200)) continue;
       const maxAge = ks.age * (tr.kind === 'lbd' ? 1 : Math.min(1.6, Math.max(0.8, 1.6 / Math.max(0.6, S))));
@@ -739,6 +756,7 @@ export function createFX2D() {
       const gx = sx(tr.x), gy = sy(tr.y), z = tr.z, hy = gy - z * ZK * S;
       if (!onScreen(gx, gy, 60)) continue;
       const k = tr.kind;
+      if (S < 1.2) { const r = 7.5; ctx.globalAlpha = 0.75; ctx.drawImage(GLOW[tr.owner === 'P' ? C_BLUE : C_ORANGE], gx - r, hy - r, r * 2, r * 2); ctx.globalAlpha = 1; }
       if (z > 0.15 && k !== 'lbd') { const r = Math.max(1.6, (0.25 + z * 0.03) * S); ctx.globalAlpha = Math.max(0.15, 0.6 / (1 + z * 0.15)); ctx.drawImage(SHADOW, gx - r, gy - r * 0.7, r * 2, r * 1.4); ctx.globalAlpha = 1; }
       drawHead(ctx, k, gx, hy, Math.max(1, S), tr.col, tr.id);
     }
@@ -901,6 +919,13 @@ export function createFX2D() {
     flash(ctx, X, Y, r) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.9; ctx.drawImage(WFLASH, X - r, Y - r, r * 2, r * 2); ctx.restore(); },
   };
 
+  fx.busyAt = (x, y, r) => {
+    const r2 = r * r, near = (px, py) => (px - x) * (px - x) + (py - y) * (py - y) < r2;
+    for (const tr of trails.values()) if (!tr.dead && near(tr.x, tr.y)) return true;
+    for (const b of bursts) if (b.k !== 'icon' && b.k !== 'swish' && near(b.x, b.y)) return true;
+    for (const em of emitters) if (near(em.x, em.y)) return true;
+    return false;
+  };
   fx.stats = () => ({ particles: NP, trails: trails.size, fires: fires.size, decals: ND, bursts: bursts.length, emitters: emitters.length, quality, drawMs: +drawMs.toFixed(2), updMs: +updMs.toFixed(2) });
   fx.clear = () => { NP = 0; ND = 0; DHEAD = 0; bursts.length = 0; trails.clear(); fires.clear(); emitters.length = 0; trauma = 0; };
   return fx;
