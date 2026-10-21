@@ -71,6 +71,9 @@ const EXP_STANCE = { peaceful: 0.4, firm: 1, unleashed: 2.5 };
 // a squad at capacity stops line grabs, stray / offender snatches and kettle filter arrests until it frees up. Leaders are exempt.
 // (Playtests: 500-900 arrests a day dissolved every march by noon and the crowd shrank day over day.)
 const CUSTODY_CAP = 3, CUSTODY_T = 600;
+// ... and the whole force at most CUST_POOL arrests at once, refilled at CUST_H0 + CUST_HD x day per hour (the vans and the
+// station; ~250-400 ordinary arrests over a full day, v1.7 runs made 500-900 and dissolved every march)
+const CUST_POOL = 25, CUST_H0 = 15, CUST_HD = 4;
 const EXP_DAY = [0.25, 0.4, 0.7, 1, 1, 1, 1]; // exposure rate by day (the first days are gentler)
 
 export default function create(sim) {
@@ -544,8 +547,9 @@ export default function create(sim) {
   }
 
   // ===================================================================== arrests
+  function poolLeft() { const d = sim.day?.day || 4, r = (CUST_H0 + CUST_HD * d) / 3600; police.custPool = Math.min(CUST_POOL, (police.custPool ?? CUST_POOL) + (T - (police.custPoolT ?? T)) * r); police.custPoolT = T; return police.custPool; } // v1.8
   function custody(sq) { if (!sq) return 0; const c = Math.max(0, (sq.cust || 0) - (T - (sq.custT ?? T)) * CUSTODY_CAP / CUSTODY_T); sq.cust = c; sq.custT = T; return c; } // v1.8
-  const custodyFull = sq => custody(sq) >= CUSTODY_CAP;
+  const custodyFull = sq => custody(sq) >= CUSTODY_CAP || poolLeft() < 1;
   function arrestAgent(i, by) {
     if (i < 0 || i >= sim.NA || gone[i] || act[i] === A_ARRESTED) return false;
     brutalityCheck(i, 'arrest', false);
@@ -553,7 +557,7 @@ export default function create(sim) {
     let sq = null, team = null;
     if (by && by.ox) sq = by; else if (by && by.team) { team = by; sq = by.sq; }
     if (!sq) sq = nearestSquad(px[i], py[i]);
-    if (sq) sq.cust = custody(sq) + 1; // v1.8 custody load
+    if (sq) sq.cust = custody(sq) + 1; police.custPool = poolLeft() - 1; // v1.8 custody load
     const rec = { uid: uidOf(i), i, x: px[i], y: py[i], sq, team, t: 0 };
     arrestees.push(rec);
     if (team) team.arrestee = rec;
