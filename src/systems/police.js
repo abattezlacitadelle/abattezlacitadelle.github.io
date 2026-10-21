@@ -67,7 +67,11 @@ const HUNT_N = 8;               // officers in a detached hunt team
 // a kettle only speeds exposure up). A leader inside a dense core of its march cannot be taken until a kettle, a charge or gas breaks the core.
 const EXP_DT = 0.5, EXP_R = 15, EXP_OWN = 8, EXP_DENSE = 12, EXP_T = 60, EXP_DECAY = 2, EXP_MULT_MAX = 6; // (rate capped: at least ~10 s exposed; v1.8 tuning: EXP_T 60, was 40)
 const EXP_STANCE = { peaceful: 0.4, firm: 1, unleashed: 2.5 };
-const EXP_DAY = [0.4, 0.6, 0.8, 1, 1, 1, 1]; // exposure rate by day (the first days are gentler)
+// v1.8 custody: every squad (or hunt team) processes at most CUSTODY_CAP ordinary arrests per CUSTODY_T s (vans, escorts, paperwork);
+// a squad at capacity stops line grabs, stray / offender snatches and kettle filter arrests until it frees up. Leaders are exempt.
+// (Playtests: 500-900 arrests a day dissolved every march by noon and the crowd shrank day over day.)
+const CUSTODY_CAP = 3, CUSTODY_T = 600;
+const EXP_DAY = [0.25, 0.4, 0.7, 1, 1, 1, 1]; // exposure rate by day (the first days are gentler)
 
 export default function create(sim) {
   const { walkAt, nearestWalkable, cellX, cellY, CELL, px, py, vx, vy, lead, act, tgt, hp, aggr, riot, panicT, extFx, extFy, gone,
@@ -540,6 +544,8 @@ export default function create(sim) {
   }
 
   // ===================================================================== arrests
+  function custody(sq) { if (!sq) return 0; const c = Math.max(0, (sq.cust || 0) - (T - (sq.custT ?? T)) * CUSTODY_CAP / CUSTODY_T); sq.cust = c; sq.custT = T; return c; } // v1.8
+  const custodyFull = sq => custody(sq) >= CUSTODY_CAP;
   function arrestAgent(i, by) {
     if (i < 0 || i >= sim.NA || gone[i] || act[i] === A_ARRESTED) return false;
     brutalityCheck(i, 'arrest', false);
@@ -547,6 +553,7 @@ export default function create(sim) {
     let sq = null, team = null;
     if (by && by.ox) sq = by; else if (by && by.team) { team = by; sq = by.sq; }
     if (!sq) sq = nearestSquad(px[i], py[i]);
+    if (sq) sq.cust = custody(sq) + 1; // v1.8 custody load
     const rec = { uid: uidOf(i), i, x: px[i], y: py[i], sq, team, t: 0 };
     arrestees.push(rec);
     if (team) team.arrestee = rec;
@@ -696,6 +703,7 @@ export default function create(sim) {
   }
   function snatchCandidate(sq) {
     if (sq.leaderCand) return { L: sq.leaderCand };
+    if (custodyFull(sq)) return null; // v1.8
     let best = -1, bd = 1e9;
     for (const j of sq.offenders) {
       const d = hyp(px[j] - sq.x, py[j] - sq.y);
@@ -802,6 +810,7 @@ export default function create(sim) {
       if (L.arrested || L.gone || !L.pexp || !L.pexp.ready || L.pexp.own >= EXP_OWN || hyp(L.x - sq.x, L.y - sq.y) > R || !offNear(L.x, L.y)) continue;
       if (countNear(L.x, L.y, 4) < 4) { arrestLeader(L, null, 'line'); police.counts.lineArrests++; sq.grabCd = GRAB_CD0; log(sq, 'line arrest: leader ' + L.id); return; }
     }
+    if (custodyFull(sq)) { sq.grabCd = 3; return; } // v1.8: at custody capacity
     let cand = -1;
     forEachNear(sq.x, sq.y, R, j => {
       const a = act[j]; if (a === A_DOWN || a === A_ARRESTED || a === A_HOME || !isProt(j)) return;
@@ -1535,7 +1544,7 @@ export default function create(sim) {
       const a = act[j]; if (a === A_DOWN || a === A_ARRESTED) return;
       const al = alongOf(fs, px[j], py[j]), la = latOf(fs, px[j], py[j]);
       if (al > -2 || al < -9 || Math.abs(la - fs.gapLat) > 4) return;
-      if ((offender(j) || aggr[j] > 0.7) && op.arrestCd <= 0) { arrestAgent(j, fs); op.arrests++; op.arrestCd = 2.5; }
+      if ((offender(j) || aggr[j] > 0.7) && op.arrestCd <= 0 && !custodyFull(fs)) { arrestAgent(j, fs); op.arrests++; op.arrestCd = 2.5; }
       else if (al < -5) { removeAgent(j); sim.dispersedHome++; op.filtered++; police.counts.filtered++; }
       else { extFx[j] -= fs.dx * 2; extFy[j] -= fs.dy * 2; }
     });
