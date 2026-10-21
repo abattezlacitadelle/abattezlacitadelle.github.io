@@ -10,7 +10,8 @@ export const STANCES = ['peaceful', 'firm', 'unleashed'];
 // re-bound, and some bystanders within RALLY_R / 2 join.
 const RALLY_R = 55, RALLY_BIND = 150, RALLY_CD = 45, RALLY_T = 20, RALLY_RECRUIT = 0.4, SCATTER_R = 60, SCATTER_CD = 90;
 const V_LEADER = 1.25; // v1.5: free walking speed of a leader with no crowd (was 1.45); / sqrt(1 + count / 300)
-const WAIT_GRACE = 6, WAIT_MIN = 0.2, WAIT_R = 12; // v1.7: s after an order before the leader waits for its crowd (v1.6: 12); slowest wait factor (v1.6: 0.65); look radius (10)
+const WAIT_GRACE = 6, WAIT_MIN = 0.06, WAIT_R = 12; // v1.7: s after an order before the leader waits for its crowd (v1.6: 12); slowest wait factor (v1.6: 0.65, v1.7: 0.2, v1.8: 0.06 so a leader does not walk away from its core); look radius (10)
+const WAIT_N = 10; // v1.8: own followers within WAIT_R the leader waits for (v1.6-1.7: 5; police exposure counts < 8 within 10 m as exposed)
 const GAS_SLOW = 0.7;  // v1.6: leader speed factor in gas > 0.3 (was 0.55)
 const LINE_KEEP = 5;   // v1.7: a marching leader halts this many metres short of an officer in front of it
 const LEADER_GAS = 0.25, V_GAS_ESC = 1.3, GAS_PROBE = 9; // v1.7: gas concentration that makes a leader step out of the cloud, and how fast (v1.8: 0.25, was 0.5: the leader leaves with its core instead of staying alone in thin gas)
@@ -143,7 +144,7 @@ export default function create(sim) {
           // order, looks 10 m around (was 8), never drops below WAIT_MIN (was 0.35) and is off in gas (a leader slowed by gas
           // AND waiting for a gassed, scattered crowd crawled inside the cloud: the main stall cause in the order regression)
           let wait = 1;
-          if (L.count >= 20 && gasSlow === 1 && sim.simTime - (L.orderT ?? -1e9) > WAIT_GRACE) { let own = 0; sim.forEachNear(L.x, L.y, WAIT_R, j => { if (lead[j] === L.id && ++own >= 5) return true; }); wait = own >= 5 ? 1 : WAIT_MIN + (1 - WAIT_MIN) / 5 * own; }
+          if (L.count >= 20 && gasSlow === 1 && sim.simTime - (L.orderT ?? -1e9) > WAIT_GRACE) { let own = 0; sim.forEachNear(L.x, L.y, WAIT_R, j => { if (lead[j] === L.id && ++own >= WAIT_N) return true; }); wait = own >= WAIT_N ? 1 : WAIT_MIN + (1 - WAIT_MIN) * (own / WAIT_N) ** 2; } // v1.8: squared (stronger) wait
           L.speed = V_LEADER / Math.sqrt(1 + L.count / 300) * (0.35 + 0.65 * L.energy / 100) * fw * gasSlow * wait;
           L.dbg = { fw, wait, gasSlow, near: nearCrowd };
           // v1.7 line keeping: a leader stops LINE_KEEP m short of a police line in front of it instead of walking into the

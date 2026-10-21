@@ -48,7 +48,7 @@ export default function create(sim) {
   const P_PAUSE = 0.18, P_CURIOUS = 0.2, P_KNOT = 0.1;     // leg mix (the rest: strolls); followers: + walk-back legs
   const LEG_T0 = 4, LEG_T1 = 9, RXN0 = 0.6, RXN1 = 4.4, SLOW_T = 5; // leg length s; reaction lag s; leader "stalled" after SLOW_T s slow
   const W_GO = 1, W_PAUSE = 2, W_BACK = 3;                 // wander leg modes (wM)
-  const CORE_SHARE = 0.2, CORE_MIN = 20, CORE_R0 = 6, CORE_RK = 0.3, CORE_RMAX = 14, CORE_GAS = 0.25; // v1.8 protective core
+  const CORE_SHARE = 0.2, CORE_MIN = 20, CORE_R0 = 6, CORE_RK = 0.3, CORE_RMAX = 14, CORE_GAS = 0.1, CORE_CALM = 2.5; // v1.8 protective core (CORE_CALM: panic wears off 2.5x faster)
   const GATE_PLANE = 0.4, GATE_EDGE = 3;                  // v1.8 gate barrier (see the hard constraint below)
   const A_HOME = ACT.HOME;
   // PRESS_UNIT: contact reaction (m/s^2) of one protester leaning hard on an officer, so sq.pressure reads as
@@ -76,6 +76,18 @@ export default function create(sim) {
   const rxn = reg(Float32Array), lapL = reg(Int16Array, -1), pk = reg(Float32Array);
   const coreU = reg(Float32Array, -1); // v1.8: per-agent draw in [0, 1): core member of its march when coreU < the march's core share
   const coreSh = new Float32Array(64), coreRad = new Float32Array(64);
+  // v1.8 rejoin: a local flow field to each leader (box +-RJ_M cells), shared by its core members walking back from beyond the core
+  // radius (a straight line snagged them on building corners: playtest traces had whole cores stuck 50 m away round a corner)
+  const RJ = new Array(64).fill(null), RJ_T = 2.5, RJ_MOVE = 5, RJ_M = 40, RJ_BUDGET = 2; let rjBudget = 0;
+  function rejoinDir(l, Ld, x, y) {
+    let R = RJ[l];
+    if ((!R || sim.simTime - R.t > RJ_T || hyp(R.x - Ld.x, R.y - Ld.y) > RJ_MOVE) && rjBudget > 0 && sim.crowdAI?.localField) {
+      rjBudget--; const F = sim.crowdAI.localField(Ld.x, Ld.y, Ld.x, Ld.y, RJ_M);
+      R = RJ[l] = F ? { F, t: sim.simTime, x: Ld.x, y: Ld.y } : null;
+    }
+    if (R && sim.crowdAI.lfDir(R.F, x, y, tmpV)) return true;
+    return dirTo(x, y, Ld.x, Ld.y, tmpV);
+  }
   Object.assign(sim, { wtX, wtY, wT, wM, lapL, rxn, coreU });
 
   // ---------------------------------------------------------------- wander legs
@@ -159,6 +171,7 @@ export default function create(sim) {
       coreSh[l] = L.coreShare = Math.min(1, Math.max(CORE_SHARE, CORE_MIN / n) * Math.min(1.5, Math.max(0.5, 1 / (L.cohesion || 1))));
       coreRad[l] = L.coreR = Math.min(CORE_RMAX, CORE_R0 + CORE_RK * Math.sqrt(n));
     }
+    rjBudget = RJ_BUDGET;
     for (const sq of squads) { sq.pressAcc = 0; if (!sq.opress || sq.opress.length < sq.n) sq.opress = new Float32Array(Math.max(sq.n, 8)); else sq.opress.fill(0); }
     // v1.6 perf: stamp the PG-m grid cells covered by any squad box (+2 m), so agents far from police skip both officer loops
     pstamp = (pstamp + 1) & 0xffff || 1;
@@ -222,7 +235,7 @@ export default function create(sim) {
         L = -1; // walking home at dusk (day system steers via fleeX/fleeY)
       } else if (panicT[i] > 0) {
         if (panicT[i] > pk[i]) pk[i] = panicT[i];
-        panicT[i] -= aura ? dt * 1.6 : dt; L = -1;
+        { const p0 = prevLead[i]; panicT[i] -= (aura ? dt * 1.6 : dt) * (p0 >= 0 && p0 < nL && coreU[i] < coreSh[p0] ? CORE_CALM : 1); } L = -1; // v1.8: the core gets over a scare faster
         if (panicT[i] <= 0) {
           const p = prevLead[i];
           if (p >= 0 && p < nL && live[p] && riot[i] < 0 && hyp(leaders[p].x - x, leaders[p].y - y) < REGROUP_R) L = p; // regroup
@@ -262,7 +275,7 @@ export default function create(sim) {
         const F = Ld.field, packed = Math.sqrt(Ld.count) * 0.95 + 3, dl = hyp(Ld.x - x, Ld.y - y);
         if (!(rxn[i] > 0)) rxn[i] = RXN0 + rand() * RXN1;
         const core = coreU[i] < coreSh[L], cr = coreRad[L]; isCore = core && dl < cr * 2;
-        const stopped = Ld.arrived || (Ld.slowT || 0) > SLOW_T || T - (Ld.orderT ?? -1e9) < rxn[i], rally = Ld.rallyT > 0;
+        const stopped = Ld.arrived || (Ld.slowT || 0) > SLOW_T || T - (Ld.orderT ?? -1e9) < rxn[i] * (core ? 0.25 : 1), rally = Ld.rallyT > 0; // v1.8: the core reacts at once
         if (rally || stopped) {
           // the way back to the leader (v1.6 perf: only computed when needed): along its field when that passes the
           // leader (arrived, or we are behind it), else straight
@@ -276,7 +289,7 @@ export default function create(sim) {
             // Rally: everyone walks back in and packs tight around the leader
             if (dl > packed && backOk) { dxD = tmpV.x; dyD = tmpV.y; vdes = v0[i] * 1.15; } else vdes = 0;
             wT[i] = 0;
-          } else if (core) { if (!backOk && dl > cr) backOk = dirTo(x, y, Ld.x, Ld.y, tmpV); if (coreStep(i, x, y, Ld, dl, cr, dt, backOk)) { dxD = WX; dyD = WY; vdes = WV; } }
+          } else if (core) { if (dl > cr) backOk = dl > cr * 1.6 ? rejoinDir(L, Ld, x, y) : (backOk || dirTo(x, y, Ld.x, Ld.y, tmpV)); if (coreStep(i, x, y, Ld, dl, cr, dt, backOk)) { dxD = WX; dyD = WY; vdes = WV; } }
           else if (legStep(i, x, y, Ld, dl, roam, dt, backOk)) { dxD = WX; dyD = WY; vdes = WV; }
         } else if (F && fieldDir(F, x, y, tmpV)) {
           // marching: follow the leader's field. Vanguard: followers may walk up to VAN_AHEAD m ahead of the leader at

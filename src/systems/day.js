@@ -286,7 +286,7 @@ export default function create(sim) {
     if (cand.length < SUCC_MIN) return false;
     for (let k = 0; k < 40; k++) {
       const j = cand[Math.floor(rand() * cand.length)];
-      if (nearOfficer(px[j], py[j], 12)) continue;
+      if (nearOfficer(px[j], py[j], 12) || Math.hypot(px[j] - sim.goal[0], py[j] - sim.goal[1]) < 90) continue; // (never inside the gate guard ring)
       const n = sim.countNear(px[j], py[j], 6); if (n > bn) { bn = n; best = j; }
     }
     if (best < 0) return false;

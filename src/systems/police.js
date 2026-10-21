@@ -63,9 +63,9 @@ const HUNT_N = 8;               // officers in a detached hunt team
 // v1.8 leader exposure (L.pexp): every EXP_DT s each active leader with fewer than EXP_OWN own (non-panicking) followers within
 // EXP_R m and fewer than EXP_DENSE people within 5 m accumulates exposure at a rate set by its risk (stance, distance to the gate,
 // crowd size, escalation 4, kettled, charged); otherwise exposure drains EXP_DECAY x faster. A leader becomes a target (snatch,
-// hunt, line grab) only when ready: exposure >= EXP_T and escalation >= 3 (>= 2 when unleashed, within 700 m of the gate or
-// kettled). A leader inside a dense core of its march cannot be taken until a kettle, a charge or gas breaks the core.
-const EXP_DT = 0.5, EXP_R = 10, EXP_OWN = 8, EXP_DENSE = 12, EXP_T = 40, EXP_DECAY = 2, EXP_MULT_MAX = 6; // (rate capped: at least ~7 s exposed)
+// hunt, line grab) only when ready: exposure >= EXP_T and escalation >= 3 (>= 2 when unleashed or within 700 m of the gate;
+// a kettle only speeds exposure up). A leader inside a dense core of its march cannot be taken until a kettle, a charge or gas breaks the core.
+const EXP_DT = 0.5, EXP_R = 15, EXP_OWN = 8, EXP_DENSE = 12, EXP_T = 60, EXP_DECAY = 2, EXP_MULT_MAX = 6; // (rate capped: at least ~10 s exposed; v1.8 tuning: EXP_T 60, was 40)
 const EXP_STANCE = { peaceful: 0.4, firm: 1, unleashed: 2.5 };
 const EXP_DAY = [0.4, 0.6, 0.8, 1, 1, 1, 1]; // exposure rate by day (the first days are gentler)
 
@@ -2135,16 +2135,16 @@ export default function create(sim) {
       let kettled = false;
       for (const op of ops) if ((op.type === 'kettle' || op.type === 'cordon' || op.type === 'funnel') && (op.phase === 'closed' || op.phase === 'drain') && hyp(L.x - op.x, L.y - op.y) < (op.r || 20) * 1.3) { kettled = true; break; }
       let m = EXP_STANCE[L.stance] ?? 1;
-      if (dG < 300) m *= 3; else if (dG < 700) m *= 1.8; else if (dG < 1500) m *= 1.2;
+      if (dG < 300) m *= 3; else if (dG < 700) m *= 1.8; else if (dG < 1500) m *= 1; else m *= 0.5; // far from the gate: half rate
       if (L.count < 120) m *= 2;
       if (esc >= 4) m *= 1.25;
-      if (kettled) m *= 2;
+      if (kettled) m *= 1.5;
       if (T - E.chargeT < 20) m *= 2;
       m = Math.min(EXP_MULT_MAX, m) * EXP_DAY[clamp((sim.day?.day || 4) - 1, 0, 6)];
       const exposed = own < EXP_OWN && dense < EXP_DENSE;
       E.t = exposed ? Math.min(EXP_T * 2, E.t + EXP_DT * m) : E.t > 0 ? Math.max(0, E.t - EXP_DT * EXP_DECAY) : E.t;
       E.own = own; E.mult = m; E.kettled = kettled; E.exposed = exposed;
-      E.ready = E.t >= EXP_T && (esc >= 3 || (esc >= 2 && (L.stance === 'unleashed' || dG < 700 || kettled)));
+      E.ready = E.t >= EXP_T && (esc >= 3 || (esc >= 2 && (L.stance === 'unleashed' || dG < 700))); // (a kettle speeds exposure up but no longer lowers the escalation bar)
     }
   }
 
