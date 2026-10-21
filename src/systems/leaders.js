@@ -80,6 +80,7 @@ export default function create(sim) {
       let n = 0;
       sim.forEachNear(L.x, L.y, SCATTER_R, (j, dx, dy) => {
         if (lead[j] !== L.id) return;
+        if (sim.coreU && sim.coreU[j] >= 0 && sim.coreU[j] < (L.coreShare || 0)) return; // v1.8: the protective core stays with its leader (playtests: a Scatter left the leader alone in the kettle, snatched within a minute)
         const a = rand() * Math.PI * 2, d = Math.hypot(dx, dy);
         const fx = d > 1 ? dx / d + Math.cos(a) * 0.5 : Math.cos(a), fy = d > 1 ? dy / d + Math.sin(a) * 0.5 : Math.sin(a);
         makePanic(j, 3 + rand() * 4, fx, fy); n++;
