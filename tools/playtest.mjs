@@ -3,6 +3,10 @@
 //   node tools/playtest.mjs [--strategies passive,reckless,careful,diversion] [--seeds 1,2,3] [--days 7]
 //                           [--jobs 12] [--map small|full] [--out playtest/out] [--quiet]
 //                           [--startDay N --crowd C]   (debug: begin on day N with C marchers; --days counts from there)
+//                           [--untilHour H]            (debug: cut the last day at H:00)
+//                           [--chunkMin M]             (v1.8: stop each worker after M wall minutes with a checkpoint,
+//                                                       tools/ckpt.mjs; call again with the same --out to resume; finished
+//                                                       jobs are skipped; prints ALL DONE when nothing is left)
 //
 // Every job (strategy x seed) runs in its own Node process (fork of this script with --worker). The sim runs in
 // fixed 0.12 s substeps; the bot decides every 5 sim seconds. The nav grid comes from data/nav-<map>.bin (dump it with
@@ -34,9 +38,25 @@ async function worker(job) {
   const bot = createBot(sim, strategy, { seed });
   const log = createLogger(sim, bot);
   const DT = 0.12, BOT_DT = 5;
-  let botAcc = 0, lastP = 0;
+  let botAcc = 0, lastP = 0, wallPrev = 0;
   const t0 = performance.now();
+  // v1.8 chunked runs (--chunkMin M): after M wall minutes the worker saves <out>/<job>.ckpt.json and exits; the next call resumes it
+  const out = path.resolve(args.out || path.join(root, 'playtest/out'));
+  const ckptF = path.join(out, `${strategy}-${seed}.ckpt.json`), chunkMs = args.chunkMin ? +args.chunkMin * 60000 : Infinity;
+  const ck = await import('./ckpt.mjs');
+  if (fs.existsSync(ckptF)) {
+    const C = JSON.parse(fs.readFileSync(ckptF, 'utf8'));
+    ck.loadSim(sim, C.sim, (seed * 100003 + Math.floor(C.sim.simTime)) >>> 0);
+    bot.load(C.bot); bot.reseed((seed * 7919 + Math.floor(C.sim.simTime)) >>> 0); log.load(C.log);
+    wallPrev = C.wallMs || 0; botAcc = 0;
+  }
   while (true) {
+    if (performance.now() - t0 > chunkMs && botAcc === 0 && (sim.day.phase === 'day' || sim.day.phase === 'dusk')) {
+      fs.mkdirSync(out, { recursive: true });
+      fs.writeFileSync(ckptF, JSON.stringify({ sim: ck.saveSim(sim), bot: bot.save(), log: log.save(), wallMs: wallPrev + performance.now() - t0 }));
+      process.send?.({ chunk: true, progress: log.progressLine() });
+      process.exit(0);
+    }
     const d = sim.day;
     if (d.phase === 'ended') { log.dayEnd(); break; }
     if (args.untilHour && d.phase === 'day' && d.t >= +args.untilHour * 3600 && d.day >= days + (+args.startDay || 1) - 1) { sim.api.dayEnd(); continue; } // debug: cut the last day at --untilHour
@@ -51,8 +71,8 @@ async function worker(job) {
     if (performance.now() - lastP > 20000) { lastP = performance.now(); process.send?.({ progress: log.progressLine() }); }
   }
   const r = log.result();
-  r.seed = seed; r.wallMin = +((performance.now() - t0) / 60000).toFixed(1); r.bot = bot.state;
-  const out = path.resolve(args.out || path.join(root, 'playtest/out'));
+  r.seed = seed; r.wallMin = +((wallPrev + performance.now() - t0) / 60000).toFixed(1); r.bot = bot.state;
+  if (fs.existsSync(ckptF)) fs.unlinkSync(ckptF);
   fs.mkdirSync(out, { recursive: true });
   fs.writeFileSync(path.join(out, `${strategy}-${seed}.json`), JSON.stringify(r));
   process.send?.({ done: true, summary: r.summary, wallMin: r.wallMin });
@@ -68,16 +88,19 @@ async function main() {
   fs.mkdirSync(outDir, { recursive: true });
   const jobs = [];
   for (const strategy of strategies) for (const seed of seeds) jobs.push({ strategy, seed, name: `${strategy}-${seed}` });
-  const pass = ['days', 'map', 'intensity', 'startDay', 'crowd', 'untilHour'].flatMap(k => args[k] ? ['--' + k, args[k]] : []);
+  // v1.8 --chunkMin: jobs already finished in --out (a result and no checkpoint) are skipped, checkpointed ones resume
+  const todo = args.chunkMin ? jobs.filter(j => !fs.existsSync(path.join(outDir, j.name + '.json')) || fs.existsSync(path.join(outDir, j.name + '.ckpt.json'))) : jobs;
+  const pass = ['days', 'map', 'intensity', 'startDay', 'crowd', 'untilHour', 'chunkMin'].flatMap(k => args[k] ? ['--' + k, args[k]] : []);
   let next = 0;
   const T0 = Date.now();
-  await Promise.all(Array.from({ length: Math.min(jobsN, jobs.length) }, async () => {
-    while (next < jobs.length) {
-      const job = jobs[next++];
+  await Promise.all(Array.from({ length: Math.min(jobsN, todo.length) }, async () => {
+    while (next < todo.length) {
+      const job = todo[next++];
       await new Promise(res => {
         const cp = fork(self, ['--worker', `${job.strategy}:${job.seed}`, '--out', outDir, ...pass], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
         cp.on('message', m => {
           if (m.progress && !args.quiet) console.log(`[${job.name} ${((Date.now() - T0) / 60000).toFixed(1)}m] ${m.progress}`);
+          if (m.chunk) console.log(`[${job.name}] CHUNK saved: ${m.progress}`);
           if (m.done) { const s = m.summary; console.log(`[${job.name}] DONE ${m.wallMin} min: ${s.win ? 'WIN' : 'LOSS'} (${s.reason}) day ${s.day} ${s.at}`); }
         });
         cp.on('exit', code => { if (code) console.log(`[${job.name}] FAILED (exit ${code})`); res(); });
@@ -85,6 +108,8 @@ async function main() {
     }
   }));
   writeReport(outDir, jobs);
+  const left = jobs.filter(j => fs.existsSync(path.join(outDir, j.name + '.ckpt.json'))).length;
+  if (args.chunkMin) console.log(left ? `CHUNKED: ${left} job(s) still running, call again to resume` : 'ALL DONE');
 }
 
 export function writeReport(outDir, jobs) {

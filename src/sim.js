@@ -373,6 +373,7 @@ export function createSim(D, opts = {}) {
     get NA() { return NA; },
     get dispersedHome() { return dispersedHome; }, set dispersedHome(v) { dispersedHome = v; },
     registerAgentArray, addAgent, removeAgent, copyAgent, spawnAround, spawnBystanders, makePanic,
+    agentArrays, // [v1.8 playtest checkpoints] every registered per-agent array ({arr, def}), read by tools/ckpt.mjs
     // spatial hash (rebuilt at the start of every substep)
     HC, hStart, hItems, hkey, buildHash, countNear, forEachNear,
     // randomness, events

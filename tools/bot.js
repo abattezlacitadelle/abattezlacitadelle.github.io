@@ -380,7 +380,17 @@ export function createBot(sim, strategy = 'careful', opts = {}) {
       o.lastCount = Math.max(L.count, o.lastCount * 0.98);
     }
   }
-  return { strategy, briefing, dayStarted, tick, state };
+  // v1.8 playtest checkpoints (tools/ckpt.mjs): the bot's memory as JSON, and back
+  function save() {
+    const pe = [...per].map(([k, o]) => [k, JSON.parse(JSON.stringify({ ...o, dTgt: null }))]);
+    return { state: { ...state }, per: pe, routes: [...routes], planT, lastPlanSig, pushGo };
+  }
+  function load(o) {
+    Object.assign(state, o.state); per.clear(); for (const [k, v] of o.per) per.set(k, v);
+    routes.clear(); for (const [k, v] of o.routes) routes.set(k, v);
+    planT = o.planT; lastPlanSig = o.lastPlanSig; pushGo = o.pushGo;
+  }
+  return { strategy, briefing, dayStarted, tick, state, save, load, reseed: n => rng.seed(n) };
 }
 
 // ============================================================ logger: per-day stats, hourly timeline, leader tracks, stalls
@@ -490,5 +500,8 @@ export function createLogger(sim, bot) {
       days,
     };
   }
-  return { dayStart, dayEnd, tick, stepMs, progressLine, result };
+  // v1.8 playtest checkpoints
+  function save() { return JSON.parse(JSON.stringify({ days, D, sampleT, hourIdx, stepAcc, stepN, stepMax, hourC0 })); }
+  function load(o) { days.length = 0; days.push(...o.days); D = o.D; sampleT = o.sampleT; hourIdx = o.hourIdx; stepAcc = o.stepAcc; stepN = o.stepN; stepMax = o.stepMax; hourC0 = o.hourC0; stallSt.clear(); }
+  return { dayStart, dayEnd, tick, stepMs, progressLine, result, save, load };
 }
