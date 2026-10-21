@@ -852,6 +852,7 @@ export default function create(sim) {
 
   // ===================================================================== squad step
   function updateSquad(sq, dt, phaseActive) {
+    const mx0 = sq.x, my0 = sq.y; // [behaviour] movement metering
     sq.chargeCd -= dt; sq.pushCd -= dt; sq.gasCd -= dt; sq.lbdCd -= dt; sq.flashCd -= dt; sq.snatchCd -= dt; sq.grabCd = (sq.grabCd || 0) - dt;
     sq.thinkT -= dt;
     if (sq.thinkT <= 0) {
@@ -1019,6 +1020,9 @@ export default function create(sim) {
     sq.n = sq.na + sq.downed.length;
     computeBB(sq);
     if (phaseActive) contactForces(sq, dt);
+    if (phaseActive) { // [behaviour] metering: metres walked on foot by squads, squad-seconds on duty
+      const C = police.counts; C.squadSec += dt; if (!sq.van) C.footM += hyp(sq.x - mx0, sq.y - my0);
+    }
   }
   // hurt front-rank officers swap places with the fittest officer of the rear ranks (relève)
   function rotateHurt(sq) {
@@ -1060,7 +1064,7 @@ export default function create(sim) {
     if ((ratio > 2.0 && sq.energy < 35) || (!moved && ratio > 2.5)) sq.brokenT += dt; else sq.brokenT = Math.max(0, sq.brokenT - dt * 0.5);
     if (sq.brokenT > GATE_BREAK_T && sq.gate) { gateBreach(sq); return; }
     if (sq.brokenT > 4) {
-      setState(sq, 'broken'); sq.routLeft = 25; sq.energy = Math.max(0, sq.energy - 15);
+      setState(sq, 'broken'); sq.routLeft = 25; sq.energy = Math.max(0, sq.energy - 15); police.counts.routs++; // [behaviour] every rout
       if (T - (sq.brokeT ?? -1e9) > 60) { police.counts.lineBreaks++; addHeat(0.2); police.urgent = true; sim.emit('lineBroken', sq.x, sq.y, { squad: sq.id }); } // v1.7: once per minute per squad (was every break, heat 0.3)
       sq.brokeT = T;
     }
@@ -2077,7 +2081,7 @@ export default function create(sim) {
         urgent: false, lastTick: -1e9, ticks: 0, deployed: false,
         baseForce: 8, reinforceCap: 4, opsRange: 1400, opBudget: 99, reinforcementsToday: 0, lastReinforceT: -1e9,
         pressureScale: 1.4, groundGiven: 0, heatWin: 0, heatWinT: -1e9, ms: 0, msSteps: 0, attacksOnOfficers: 0, hotspots: [], threats: [], ops, log: [],
-        counts: { gas: 0, lbd: 0, flash: 0, charges: 0, warnings: 0, arrests: 0, leaderArrests: 0, snatches: 0, filtered: 0, officersDown: 0, lineBreaks: 0, reinforcements: 0, gateBreaches: 0, intelTurns: 0, lineArrests: 0,
+        counts: { gas: 0, lbd: 0, flash: 0, charges: 0, warnings: 0, arrests: 0, leaderArrests: 0, snatches: 0, filtered: 0, officersDown: 0, lineBreaks: 0, reinforcements: 0, gateBreaches: 0, intelTurns: 0, lineArrests: 0, footM: 0, squadSec: 0, routs: 0,
           vanTrips: 0, plans: 0, retasks: 0, blocks: 0, kettles: 0, cordons: 0, funnels: 0, splits: 0, hunts: 0, huntArrests: 0, gaps: 0 },
       };
       police.prof = prof;
