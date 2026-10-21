@@ -36,7 +36,8 @@ const PERIM_R = 110;            // v1.7: planner perimeter posts on the approach
 const GATE_R = 65, GATE_GAP = 6, GATE_BREACH_T = 40, GATE_STR = 1.8, GATE_BREAK_T = 8;
 const BLOCK_MIN_AHEAD = 110, BLOCK_WINDOW = 320, BLOCK_MAX_AHEAD = 1100, BLOCK_MIN_DG = 170; // m along the predicted route
 // v1.6 brutal: more gas, sooner; more charges
-const GAS_CD0 = 14, GAS_CD1 = 10, GAS_MASS = 10, CHARGE_CD0 = 22, CHARGE_CD1 = 12, CHARGE_FRONT = 4, SNATCH_CD0 = 16, SNATCH_CD1 = 10;
+const GAS_CD0 = 9, GAS_CD1 = 7, GAS_MASS = 8, GAS_SKIP = 0.3, // [behaviour] gas every 9-16 s (v1.7: 14-24 s), from 8 people (v1.7: 10); skip ground above 0.3
+   CHARGE_CD0 = 22, CHARGE_CD1 = 12, CHARGE_FRONT = 4, SNATCH_CD0 = 16, SNATCH_CD1 = 10;
 // riot gear: damage multiplier per hit kind (helmet, shield, body armour)
 // v1.6 (v1.5: melee .25, rock .3, paving .35, bottle .3, firework .3, molotov .45, fire .4, blast .5; v1.4: .35/.5/.5/.45/.5/.6/.6/.6)
 const ARMOUR = { melee: 0.24, rock: 0.3, paving: 0.34, bottle: 0.3, firework: 0.3, molotov: 0.45, fire: 0.4, blast: 0.5, lbd: 0.5, flashbang: 0.3, gas: 0.1 };
@@ -45,7 +46,8 @@ const HP_REGEN = 0.005;         // officer hp/s recovered when the squad has not
 // V_VAN along the streets; it dismounts VAN_DISMOUNT m before the destination or when protesters close in (VAN_STOP_R), and
 // re-mounts on foot legs once the street is clear again. Mounted squads are drawn as vans and are not obstacles / targets.
 const VAN_MIN = 80, V_VAN = 6.5, VAN_DISMOUNT = 40, VAN_CLEAR_R = 60, VAN_CLEAR_N = 8, VAN_STOP_R = 28, VAN_SIZE = 8;
-const GAS_STOCK = 40;           // v1.7: tear-gas canisters a squad carries (restocks at rest / in reserve, and each morning)
+const GAS_STOCK = 100;          // [behaviour] canisters a squad carries (v1.7: 40); restocked at rest / in reserve / each morning, and by supply vans on duty
+const GAS_RESUPPLY = 30, GAS_RESUPPLY_LOW = 6, GAS_LOW = 25; // [behaviour] s per canister brought up on duty while not in contact (faster below GAS_LOW)
 const HEAT_WIN = 0.7;
 const GRAB_R = 3, GRAB_ALLIES = 1, GRAB_CD0 = 7, GRAB_CD1 = 7; // v1.7 line arrests (lineGrab); first pass 2 allies, 4-8 s: 400-1000 line arrests a day
 // v1.7 march intelligence (inferred destinations, see inferMarch)
@@ -437,6 +439,7 @@ export default function create(sim) {
       return;
     }
     let lat = sq.lat[k] ?? 0, row = sq.row[k] ?? 0;
+    const bh = sq.bh; if (bh) { lat += bh.jl[k]; row += bh.jr[k] - bh.bend[k]; } // [behaviour] ragged / bent line
     if (sq.state === 'broken') { lat *= 1.5; row = row * 2.5 - ((k * 7919) % 5) * 0.6; lat += (((k * 104729) % 7) - 3) * 0.4; }
     out.x = sq.x + sq.pxu * lat + sq.dx * row; out.y = sq.y + sq.pyu * lat + sq.dy * row;
   }
@@ -455,6 +458,7 @@ export default function create(sim) {
     sq = resolveSquad(sq); if (!sq) return false;
     const p = snapWalk(x, y); if (!p) return false;
     if (opts.tactic) setTactic(sq, opts.tactic);
+    if (sq.bh) { sq.bh.sally = null; sq.bh.pt = null; } // [behaviour]
     sq.dest = { x: p.x, y: p.y, fx: fx ?? sq.dx, fy: fy ?? sq.dy, exact: !!opts.exact, then: opts.then || 'hold', pushTo: opts.pushTo || null, pushDist: opts.pushDist || 0, gap: opts.gap || 0, maxAdv: opts.maxAdv };
     sq.home = { x: p.x, y: p.y };
     if (hyp(sq.x - p.x, sq.y - p.y) < 3) { arrive(sq); return true; }
@@ -491,6 +495,7 @@ export default function create(sim) {
   }
   function orderCharge(sq, dist, keep = false) {
     sq = resolveSquad(sq); if (!sq || sq.formation !== 'line') return false;
+    if (sq.bh) sq.bh.sally = null; // [behaviour] (riposte sets it again for a sally)
     sq.chargeLeft = dist ?? (10 + rand() * 5); sq.chargeKeep = keep;
     sq.chargeCd = CHARGE_CD0 + rand() * CHARGE_CD1; sq.energy = Math.max(0, sq.energy - 8);
     police.counts.charges++;
@@ -504,6 +509,7 @@ export default function create(sim) {
     const sq = resolveSquad(sqRef); if (!sq || k < 0 || k >= sq.na) return false;
     sq.hp[k] -= dmg * (ARMOUR[kind] ?? 0.5);
     sq.attackedT = T; police.attacksOnOfficers++;
+    if (sq.bh) sq.bh.aggro += 0.6; // [behaviour]
     addHeat(0.01);
     if (sq.hp[k] <= 0) { downOfficer(sq, k, kind); return true; }
     return false;
@@ -514,6 +520,7 @@ export default function create(sim) {
     sq.ox[k] = sq.ox[l]; sq.oy[k] = sq.oy[l]; sq.hp[k] = sq.hp[l]; sq.na = l;
     if (sq.formation === 'line') layoutLine(sq);
     police.counts.officersDown++; addHeat(0.12); police.urgent = true;
+    if (!sq.gate && sq.cohesion != null) { sq.cohesion = Math.max(0, sq.cohesion - 0.05); if (sq.bh) sq.bh.aggro += 1.5; } // [behaviour]
     sim.emit('officerDown', sq.ox[k], sq.oy[k], { squad: sq.id, kind });
   }
 
@@ -635,7 +642,7 @@ export default function create(sim) {
 
   // ===================================================================== perception (staggered think)
   function scan(sq) {
-    let load = 0, front = 0, near = 0, nx = 0, ny = 0;
+    let load = 0, front = 0, near = 0, nx = 0, ny = 0, close = 0;
     const thr = sq.throwers, offs = sq.offenders, strays = sq.strays || (sq.strays = []); thr.length = 0; offs.length = 0; strays.length = 0;
     const half = sq.half + 1, H = sq.hunt, cx = H ? sq.x : sq.x + sq.dx * 18, cy = H ? sq.y : sq.y + sq.dy * 18, pS = H ? 0.6 : 0.15;
     forEachNear(cx, cy, H ? 45 : 30, j => {
@@ -648,16 +655,17 @@ export default function create(sim) {
       if (al < 5 && ala < half && panicT[j] <= 0) {
         if (committed) { load += 0.5 + aggr[j] + (a === A_PUSH || a === A_FIGHT ? 1 : 0); front++; } else load += 0.1;
       }
-      if (al > 6 && al < 48 && ala < half + 14 && committed && panicT[j] <= 0) { near++; nx += px[j]; ny += py[j]; }
+      if (al > 6 && al < 48 && ala < half + 14 && committed && panicT[j] <= 0) { near++; nx += px[j]; ny += py[j]; if (al < 20) close++; } // [behaviour] close: 6-20 m
       if ((a === A_THROW || a === A_FIGHT) && al < 40 && thr.length < 8) thr.push(j);
       if (isOffAct(a) && al > 2 && al < 35 && offs.length < 6) offs.push(j);
       else if (committed && al > 2 && al < 40 && panicT[j] <= 0 && strays.length < 8 && rand() < pS) strays.push(j); // hunting (random sample)
     });
     sq.pressEst = load;
     sq.load = typeof sq.pressure === 'number' ? sq.pressure * police.pressureScale : load; // crowd system's force if it provides one
-    sq.front = front; sq.near = near;
+    sq.front = front; sq.near = near; sq.close = close;
     if (near) { sq.nearX = nx / near; sq.nearY = ny / near; }
-    sq.strength = sq.na * STR_PER_OFF * (0.45 + 0.55 * sq.energy / 100) * (sq.gate ? GATE_STR : 1); // v1.7: gate guard behind barriers
+    sq.strength = sq.na * STR_PER_OFF * (0.45 + 0.55 * sq.energy / 100) * (sq.gate ? GATE_STR : 1) // v1.7: gate guard behind barriers
+      * (sq.gate || sq.cohesion == null ? 1 : COH_STR0 + (1 - COH_STR0) * sq.cohesion); // [behaviour] a shaken line is weaker
     // exposed leaders: few people around them, within reach in front
     sq.leaderCand = null;
     // v1.5: leaders are snatch targets from escalation 3 (doc: notoriety at level >= 3), or from level 2 when they
@@ -718,14 +726,15 @@ export default function create(sim) {
     const esc = police.escalation, att = attacked(sq);
     const st = sq.state, lineReady = st === 'hold' || st === 'push' || st === 'yield';
     const wantsForce = sq.front >= 4 || sq.near >= 20 || sq.throwers.length >= 2 || sq.tactic === 'advance' || sq.tactic === 'funnel-push' || sq.tactic === 'clear'
-      || watchD(sq) < 150 || (sq.hunt && sq.strays && sq.strays.length > 0);
+      || watchD(sq) < 150 || (sq.hunt && sq.strays && sq.strays.length > 0) || sq.front + (sq.close || 0) >= 8; // [behaviour] a close crowd gets the sommations (gas follows)
     if (esc >= 1 && !att && wantsForce && !warned(sq)) issueWarning(sq);
     if (!lineReady) return;
     const force = forceOK(sq);
     // v1.6 area denial: a block line gasses the head and flanks of the march it waits for as it comes within ~130 m
     const wd = watchD(sq);
-    if (force && esc >= 2 && sq.gasCd <= 0 && wd < 135 && wd > 25 && sq.energy > 10) {
-      const L = sq.watch.L; gasAt(sq, L ? L.x : sq.watch.x, L ? L.y : sq.watch.y, esc >= 3 ? 4 : 3, 16); log(sq, 'gas ahead');
+    if (force && esc >= 1 && sq.gasCd <= 0 && wd < 150 && wd > 25 && sq.energy > 10) { // [behaviour] from escalation 1 (was 2), skips ground still gassed
+      const L = sq.watch.L, gx = L ? L.x : sq.watch.x, gy = L ? L.y : sq.watch.y;
+      if (gasFree(gx, gy)) { gasAt(sq, gx, gy, esc >= 3 ? 4 : 3, 16); sq.gasCd += 12; police.counts.gasDeny++; log(sq, 'gas ahead'); } else sq.gasCd = 4;
     }
     const dens = sq.front / Math.max(10, 5 * 2 * sq.half);
     let thrNear = 0; for (const j of sq.throwers) if (alongOf(sq, px[j], py[j]) < 22) thrNear++;
@@ -735,10 +744,15 @@ export default function create(sim) {
     const mass = sq.near + 0.5 * sq.front; // area denial in front of the line counts too
     // v1.7: volleys need a hostile or advancing crowd (attacked, throwers, a pressing front, offenders, the march a block waits for,
     // or a big mass from escalation 3) and canisters in stock (limited supply: squads rotate out to restock)
-    const hostile = att || sq.throwers.length > 0 || sq.front >= 4 || sq.offenders.length >= 2 || wd < 150 || (esc >= 3 && mass >= 25);
-    const uGas = force && hostile && sq.gasStock > 0 && (esc >= 2 || att) && sq.gasCd <= 0 && !(sq.op && sq.op.type === 'kettle') && mass >= GAS_MASS && sq.energy > 10 ? 45 * Math.min(2, mass / 30) * wind : 0; // v1.5: was mass >= 30, / 60
+    // [behaviour] gas is the default tool (user feedback 2026-10-20 #2): from escalation 1 once the area is warned (or when attacked;
+    // v1.7 needed escalation 2), against any committed crowd that comes close or lingers after the sommations, not only hostile ones.
+    // An approaching crowd gets a denial volley across the street in front of the line; a close / lingering / hostile one a dispersal
+    // volley on its centre. Ground that is still gassed is skipped (re-gassed as it clears): steer and scatter, not saturate.
+    const closeN = sq.front + (sq.close || 0), linger = sq.bh ? sq.bh.lingerT : 0;
+    const hostile = att || sq.throwers.length > 0 || sq.front >= 4 || sq.offenders.length >= 2 || wd < 150 || (esc >= 3 && mass >= 25) || closeN >= 8 || linger > 15 || (esc >= 2 && mass >= 20);
+    const uGas = force && hostile && sq.gasStock >= 1 && sq.gasCd <= 0 && !(sq.op && sq.op.type === 'kettle') && mass >= GAS_MASS && sq.energy > 10 ? (40 + 30 * Math.min(2, mass / 25)) * wind : 0;
     if (uCharge >= 30 && uCharge >= uGas && !sq.gate) orderCharge(sq, undefined, sq.tactic === 'advance' || sq.tactic === 'clear' || sq.tactic === 'funnel-push');
-    else if (uGas >= 30) gasVolley(sq);
+    else if (uGas >= 30) gasChoice(sq, closeN, linger, att);
     // LBD at visible throwers (sparingly)
     if (sq.throwers.length && sq.lbdCd <= 0 && sq.lbdStock > 0 && (esc >= 2 || att) && rand() < 0.3) {
       let best = -1, bd = 41; for (const j of sq.throwers) { const d = hyp(px[j] - sq.x, py[j] - sq.y); if (d < bd) { bd = d; best = j; } }
@@ -803,10 +817,22 @@ export default function create(sim) {
     }
     sq.gasCd = GAS_CD0 + rand() * GAS_CD1; sq.energy = Math.max(0, sq.energy - 1);
   }
+  // [behaviour] gas helpers
+  const gasFree = (x, y) => !sim.gasSample || sim.gasSample(x, y).s < GAS_SKIP;
+  function gasChoice(sq, closeN, linger, att) {
+    const esc = police.escalation;
+    if (closeN < 8 && !att && !sq.throwers.length && sq.near >= 8) { // approaching: deny the ground in front of the line
+      const dd = 18 + rand() * 8, x = sq.x + sq.dx * dd, y = sq.y + sq.dy * dd;
+      if (gasFree(x, y)) { gasAt(sq, x, y, esc >= 3 ? 3 : 2, 7); police.counts.gasDeny++; log(sq, 'gas deny'); } else sq.gasCd = 4;
+      return;
+    }
+    if (att || gasFree(sq.near >= 10 ? sq.nearX : sq.x + sq.dx * 18, sq.near >= 10 ? sq.nearY : sq.y + sq.dy * 18)) { gasVolley(sq); police.counts.gasDisperse++; }
+    else sq.gasCd = 4;
+  }
   function gasVolley(sq) {
     if (sq.near < 10) { sq.nearX = sq.x + sq.dx * 18; sq.nearY = sq.y + sq.dy * 18; } // no crowd further out: deny the zone just in front
     let gx = sq.nearX - sq.x, gy = sq.nearY - sq.y; const l = hyp(gx, gy) || 1; gx /= l; gy /= l;
-    const dist = clamp(l, 20, 50), n = Math.min(police.escalation >= 3 ? 5 : 4, Math.floor(sq.gasStock));
+    const dist = clamp(l, 20, 50), n = Math.min(3 + (police.escalation >= 3 ? 1 : 0) + (sq.near >= 60 ? 1 : 0), Math.floor(sq.gasStock)); // [behaviour] 3-5 (v1.7: 4-5)
     if (n <= 0) { sq.gasCd = 10; return; }
     sq.gasStock -= n;
     for (let q = 0; q < n; q++) {
@@ -850,6 +876,141 @@ export default function create(sim) {
     });
   }
 
+  // ===================================================================== [behaviour] cohesion, reactions to aggression, live lines
+  // (user feedback 2026-10-20, items 1, 5, 6; docs/notes/police-behaviour.md)
+  // - sq.cohesion 0..1 (morale / formation integrity). It drains while the squad is heavily outnumbered close in (odds = weighted
+  //   committed protesters in front / active officers above COH_ODDS0), faster when the crowd presses or attacks; it recovers when the
+  //   odds are low. It scales line strength (x COH_STR0 + (1 - COH_STR0) x cohesion). Below COH_RAGGED the line visibly loses shape
+  //   (officers jitter out of their slots, pressed front officers are bent back); below COH_BREAK while pressed or attacked the
+  //   squad routs in disorder ('broken', farther with bigger odds), then regroups with cohesion COH_AFTER. The gate guard is exempt.
+  // - Aggression meter (sq.bh.aggro): hits on officers, brawlers on the line, throwers in front, a pressing front. Above RIP_AGGRO
+  //   the squad hits back: a sally (a steered charge at the throwers, up to RIP_MAX m from its post, then it walks back and faces
+  //   its post again), a short clearing charge on the front, or, if the crowd is far bigger (odds > RIP_ODDS) or cohesion is low,
+  //   a gas volley on the attackers. Snatch teams are readied to take the attackers.
+  // - Live lines: quiet squads patrol forward and back around their post, a bound forward at a close crowd (show of force), a step
+  //   back when outnumbered, and the front rank rotates with the second rank every ~40-70 s in contact (releve).
+  const COH_ODDS0 = 3, COH_DRAIN = 0.022, COH_REC = 0.025, COH_RAGGED = 0.7, COH_BREAK = 0.22, COH_AFTER = 0.42, COH_STR0 = 0.55;
+  const RIP_AGGRO = 2.5, RIP_CD0 = 16, RIP_CD1 = 14, RIP_MAX = 40, RIP_ODDS = 6, RIP_OP = 14;
+  const PATROL_V = 0.8, PATROL_R = 8, PATROL_R_RES = 16, ROT_T0 = 40, ROT_T1 = 30;
+  function bhOf(sq) {
+    return sq.bh || (sq.bh = { jl: new Float32Array(CAP), jr: new Float32Array(CAP), bend: new Float32Array(CAP), jMag: 0, jT: 0, aggro: 0, ripCd: 4 + rand() * 8,
+      sally: null, pt: null, ptV: PATROL_V, ptWait: rand() * 8, rotT: ROT_T0 + rand() * ROT_T1, lingerT: 0, odds: 0 });
+  }
+  const oddsOf = sq => (sq.front + 0.7 * (sq.close || 0) + 0.15 * sq.near) / Math.max(4, sq.na);
+  function behaviourThink(sq, phaseActive) {
+    const b = bhOf(sq), dt = THINK;
+    if (sq.cohesion == null) sq.cohesion = 1;
+    b.ripCd -= dt; b.rotT -= dt; b.aggro *= 0.8;
+    const st = sq.state;
+    if (st === 'broken') { shapeLine(sq, b); return; } // routing: cohesion frozen until it regroups
+    if (sq.gate || sq.van || st === 'move' || st === 'rest' || !phaseActive) { // off the line: recover, formation tidies up
+      sq.cohesion = Math.min(1, sq.cohesion + COH_REC * (st === 'rest' ? 3 : 1) * dt); b.odds = 0; b.lingerT = 0;
+      if (sq.gate) sq.cohesion = 1;
+      shapeLine(sq, b);
+      return;
+    }
+    const odds = b.odds = oddsOf(sq), ratio = sq.load / Math.max(1, sq.strength), att = T - sq.attackedT < 8;
+    if ((sq.brawlers || 0) > 0) sq.attackedT = T; // a brawl on the line is an attack on it
+    // ---- cohesion
+    let dC = 0;
+    if (odds > COH_ODDS0) dC -= COH_DRAIN * Math.min(4, odds - COH_ODDS0) * (0.15 + Math.min(1.5, ratio)) * (sq.energy < 30 ? 1.4 : 1);
+    if (att) dC -= 0.008;
+    if (odds < 1.5 && T - sq.attackedT > 15) dC += COH_REC * (sq.tactic === 'reserve' ? 2 : 1);
+    else if (odds < COH_ODDS0 && !att) dC += COH_REC * 0.35;
+    sq.cohesion = clamp(sq.cohesion + dC * dt, 0, 1);
+    if (!sq.hunt && sq.cohesion < COH_BREAK && (ratio > 0.5 || att) && (st === 'hold' || st === 'push' || st === 'yield')) { rout(sq, odds); shapeLine(sq, b); return; }
+    // close crowd lingering in front (dispersal gas after warnings, see decide)
+    if (sq.front + (sq.close || 0) >= 8) b.lingerT += dt; else b.lingerT = Math.max(0, b.lingerT - 2 * dt);
+    // ---- aggression meter and reactions (the hits themselves are added in hitOfficer)
+    let thrNear = 0; for (const j of sq.throwers) { const al = alongOf(sq, px[j], py[j]); if (al > 1 && al < 40) thrNear++; }
+    b.aggro += 0.6 * Math.min(3, sq.brawlers || 0) + 0.25 * thrNear + (ratio > 0.6 && sq.front >= 4 ? 0.6 : 0);
+    const lineOK = sq.formation === 'line' && (st === 'hold' || st === 'push' || st === 'yield');
+    if (lineOK && b.aggro > RIP_AGGRO && b.ripCd <= 0 && !sq.hunt && sq.na >= 10 && sq.energy > 20 && sq !== sq.op?.filterSq && forceOK(sq)) riposte(sq, b, odds);
+    else if (lineOK && st === 'hold' && !sq.hunt) liveLine(sq, b, odds, ratio);
+    // ---- releve: the front rank swaps with the second rank now and then while in contact
+    if (b.rotT <= 0 && st === 'hold' && sq.formation === 'line' && sq.front >= 2 && sq.na >= 2 * sq.nFront) {
+      b.rotT = ROT_T0 + rand() * ROT_T1;
+      for (let k = 0; k < sq.nFront; k++) { const r = k + sq.nFront, x = sq.ox[k], y = sq.oy[k], h = sq.hp[k]; sq.ox[k] = sq.ox[r]; sq.oy[k] = sq.oy[r]; sq.hp[k] = sq.hp[r]; sq.ox[r] = x; sq.oy[r] = y; sq.hp[r] = h; }
+      sq._settled = false; police.counts.rotations++;
+    }
+    shapeLine(sq, b);
+  }
+  // per-officer slot offsets: ragged formation (jitter grows as cohesion drops) and the line bent back where the crowd presses
+  function shapeLine(sq, b) {
+    const dis = 1 - sq.cohesion, mag = sq.state === 'broken' ? 1 : clamp((dis - (1 - COH_RAGGED)) / COH_RAGGED, 0, 1);
+    let ch = false;
+    if ((b.jT -= THINK) <= 0 || Math.abs(mag - b.jMag) > 0.25) {
+      b.jT = 1.5 + rand() * 2; b.jMag = mag;
+      if (mag > 0.02) { for (let k = 0; k < sq.na; k++) { b.jl[k] = (rand() - 0.5) * 3.2 * mag; b.jr[k] = (rand() - 0.7) * 3.0 * mag; } ch = true; }
+      else if (b.jl[0] || b.jr[0] || b.jl[1]) { b.jl.fill(0); b.jr.fill(0); ch = true; }
+    }
+    const op = sq.opress, nf = sq.formation === 'line' ? Math.min(sq.nFront, sq.na) : 0;
+    for (let k = 0; k < nf; k++) {
+      const tgt = op && k < op.length ? Math.min(1, op[k] / 35) * (0.4 + 2.6 * dis) : 0, d = tgt - b.bend[k];
+      if (d > 0.08 || d < -0.08) { b.bend[k] += d * 0.4; ch = true; }
+    }
+    for (let k = nf; k < sq.na; k++) if (b.bend[k]) { b.bend[k] = 0; ch = true; }
+    if (ch) sq._settled = false;
+  }
+  function rout(sq, odds) {
+    setState(sq, 'broken'); sq.routLeft = 18 + 6 * Math.min(5, odds); sq.energy = Math.max(0, sq.energy - 10); sq.pushLeft = 0;
+    police.counts.routs++; police.counts.cohesionBreaks++; police.urgent = true;
+    sim.emit('routed', sq.x, sq.y, { squad: sq.id, cohesion: +sq.cohesion.toFixed(2), odds: +odds.toFixed(1) });
+    if (T - (sq.brokeT ?? -1e9) > 60) { police.counts.lineBreaks++; addHeat(0.2); sim.emit('lineBroken', sq.x, sq.y, { squad: sq.id, cause: 'cohesion' }); }
+    sq.brokeT = T; log(sq, 'routed (cohesion ' + sq.cohesion.toFixed(2) + ', odds ' + odds.toFixed(1) + ')');
+  }
+  function riposte(sq, b, odds) {
+    b.aggro = 0; b.ripCd = RIP_CD0 + rand() * RIP_CD1; police.counts.ripostes++;
+    sq.snatchCd = Math.min(sq.snatchCd, 1.5); // arrest teams go for the attackers
+    let tx = 0, ty = 0, n = 0;
+    for (const j of sq.throwers) { const al = alongOf(sq, px[j], py[j]); if (al > 2 && al < 42) { tx += px[j]; ty += py[j]; n++; } }
+    if (odds > RIP_ODDS || sq.cohesion < 0.55) { // far too many to go in: gas them instead
+      if (sq.gasStock >= 1) { if (n) { sq.nearX = tx / n; sq.nearY = ty / n; sq.near = Math.max(sq.near, 10); } gasVolley(sq); police.counts.ripGas++; log(sq, 'riposte: gas'); }
+      b.ripCd *= 0.6; return;
+    }
+    const room = (sq.op ? RIP_OP : RIP_MAX) - hyp(sq.x - sq.home.x, sq.y - sq.home.y);
+    if (n && room > 8) {
+      tx /= n; ty /= n; const d = hyp(tx - sq.x, ty - sq.y);
+      if (clearLine(sq.x, sq.y, tx, ty) && orderCharge(sq, clamp(d + 4, 8, room))) {
+        b.sally = { tx, ty, fx: sq.dx, fy: sq.dy }; police.counts.sallies++; log(sq, 'riposte: sally ' + Math.round(d) + ' m'); return;
+      }
+    }
+    if ((sq.front >= 2 || (sq.brawlers || 0) > 0) && orderCharge(sq, 8 + rand() * 6)) { log(sq, 'riposte: clearing charge'); return; }
+    if (sq.gasStock >= 1 && n) { sq.nearX = tx / n; sq.nearY = ty / n; sq.near = Math.max(sq.near, 10); gasVolley(sq); police.counts.ripGas++; log(sq, 'riposte: gas'); }
+  }
+  // a holding line that is not reacting: bound at a close crowd, step back when outnumbered (patrols are in holdMove)
+  function liveLine(sq, b, odds, ratio) {
+    if (sq.gate || sq.creep) return;
+    const adv = (sq.anchor.x - sq.home.x) * sq.dx + (sq.anchor.y - sq.home.y) * sq.dy; // metres ahead of the post
+    if (odds > COH_ODDS0 && sq.cohesion < 0.6 && ratio < 1.05 && adv > -10 && !b.pt) { // give a few metres before it breaks
+      const p = { x: sq.anchor.x - sq.dx * 3, y: sq.anchor.y - sq.dy * 3 };
+      if (walkAt(p.x, p.y) && goalD(p.x, p.y) > GOAL_HOLD) { b.pt = p; b.ptV = 0.6; police.counts.stepBacks++; }
+      return;
+    }
+    if (sq.pushCd <= 0 && sq.front < 4 && (sq.close || 0) >= 12 && odds < COH_ODDS0 && sq.cohesion > 0.6 && sq.energy > 30 && adv < sq.maxAdv - 3 && pushOK(sq)) {
+      startPush(sq, null, 4 + rand() * 4); sq.pushCd = 18 + rand() * 12; police.counts.bounds++;
+    }
+  }
+  // hold-state anchor moves: a step-back point, or a patrol point around the post once things are quiet
+  function holdMove(sq, e, dt) {
+    const b = bhOf(sq);
+    if (!b.pt) {
+      if (sq.front > 0 || sq.near >= 10 || sq.quietT < 4) return;
+      if ((b.ptWait -= dt) > 0) return;
+      const ready = watchD(sq) < 220; // a march is coming: stand on the post
+      const R = sq.tactic === 'reserve' ? PATROL_R_RES : ready ? 0 : Math.min(PATROL_R, Math.max(2, sq.maxAdv - 2));
+      const along = R ? (rand() * 1.6 - 0.6) * R : 0;
+      const p = { x: sq.home.x + sq.dx * along, y: sq.home.y + sq.dy * along };
+      b.pt = walkAt(p.x, p.y) && clearLine(sq.anchor.x, sq.anchor.y, p.x, p.y) ? p : { x: sq.home.x, y: sq.home.y }; b.ptV = PATROL_V;
+    }
+    const ex = b.pt.x - sq.anchor.x, ey = b.pt.y - sq.anchor.y, d = hyp(ex, ey);
+    if (d < 0.3) { b.pt = null; b.ptWait = 5 + rand() * 12; return; }
+    const s = Math.min(d, (b.ptV || PATROL_V) * e * dt), nx = sq.anchor.x + ex / d * s, ny = sq.anchor.y + ey / d * s;
+    if (!walkAt(nx, ny)) { b.pt = null; b.ptWait = 4; return; }
+    sq.anchor.x = nx; sq.anchor.y = ny; sq.sinceRelayout += s;
+    if (sq.sinceRelayout > 1.5) { sq.sinceRelayout = 0; relayoutExtents(sq); }
+  }
+
   // ===================================================================== squad step
   function updateSquad(sq, dt, phaseActive) {
     const mx0 = sq.x, my0 = sq.y; // [behaviour] movement metering
@@ -862,6 +1023,7 @@ export default function create(sim) {
       else { sq.front = 0; sq.near = 0; sq.load = 0; }
       decide(sq, phaseActive);
       if (phaseActive && sq.grabCd <= 0) lineGrab(sq);
+      behaviourThink(sq, phaseActive); // [behaviour]
     }
     const e = ef(sq);
     let vOff = V_OFF;
@@ -924,8 +1086,15 @@ export default function create(sim) {
         break;
       }
       case 'charge': {
+        const sal = sq.bh?.sally; // [behaviour] a sally steers at the attackers and stops against a solid mass
+        if (sal) {
+          const ex = sal.tx - sq.x, ey = sal.ty - sq.y, l = hyp(ex, ey);
+          if (l > 3) { sq.dx = sq.dx * 0.85 + ex / l * 0.15; sq.dy = sq.dy * 0.85 + ey / l * 0.15; const q = hyp(sq.dx, sq.dy) || 1; sq.dx /= q; sq.dy /= q; sq.pxu = sq.dy; sq.pyu = -sq.dx; }
+          if ((sq.sallyChk = (sq.sallyChk || 0) - dt) <= 0) { sq.sallyChk = 0.4; if (countNear(sq.x + sq.dx * 3, sq.y + sq.dy * 3, 2.5) > 12) sq.chargeLeft = 0; }
+        }
         const v = V_CHARGE * e, nx = sq.x + sq.dx * v * dt, ny = sq.y + sq.dy * v * dt;
         if (walkAt(nx, ny) && sq.chargeLeft > 0) { sq.x = nx; sq.y = ny; sq.chargeLeft -= v * dt; }
+        else if (sal && sq.chargeLeft > 0) { const x0 = sq.x, y0 = sq.y; moveWithWalls(sq, sq.dx * v * dt, sq.dy * v * dt); const m = hyp(sq.x - x0, sq.y - y0); sq.chargeLeft = m < v * dt * 0.3 ? 0 : sq.chargeLeft - m; }
         else sq.chargeLeft = 0;
         if (sq.chargeLeft <= 0) {
           if (sq.chargeKeep) { sq.anchor.x = sq.x; sq.anchor.y = sq.y; relayoutExtents(sq); }
@@ -936,7 +1105,13 @@ export default function create(sim) {
       }
       case 'regroup': { // stop, re-form, walk back to the anchor
         sq.regroupT = (sq.regroupT || 0) - dt;
-        if (sq.regroupT < 3) {
+        const sal = sq.bh?.sally; // [behaviour] back from a sally: walk back (around corners), turn to face the post again
+        if (sal && sq.regroupT < 3) {
+          const ex = sq.anchor.x - sq.x, ey = sq.anchor.y - sq.y, d = hyp(ex, ey);
+          sq.dx = sq.dx * 0.9 + sal.fx * 0.1; sq.dy = sq.dy * 0.9 + sal.fy * 0.1; { const q = hyp(sq.dx, sq.dy) || 1; sq.dx /= q; sq.dy /= q; sq.pxu = sq.dy; sq.pyu = -sq.dx; }
+          if (d > 0.3) { const s = Math.min(d, 1.5 * e * dt), x0 = sq.x, y0 = sq.y; moveWithWalls(sq, ex / d * s, ey / d * s); if (hyp(sq.x - x0, sq.y - y0) < s * 0.2) { sq.x += ex / d * s; sq.y += ey / d * s; } }
+          else if (sq.regroupT <= 0) { sq.x = sq.anchor.x; sq.y = sq.anchor.y; sq.dx = sal.fx; sq.dy = sal.fy; sq.pxu = sq.dy; sq.pyu = -sq.dx; sq.bh.sally = null; setState(sq, 'hold'); }
+        } else if (sq.regroupT < 3) {
           const ex = sq.anchor.x - sq.x, ey = sq.anchor.y - sq.y, d = hyp(ex, ey);
           if (d > 0.2) { const s = Math.min(d, 1.0 * e * dt); sq.x += ex / d * s; sq.y += ey / d * s; }
           else if (sq.regroupT <= 0) setState(sq, 'hold');
@@ -957,13 +1132,13 @@ export default function create(sim) {
         }
         if (walkAt(ax, ay)) { sq.anchor.x = ax; sq.anchor.y = ay; sq.routLeft -= 2.0 * dt; } else sq.routLeft = 0;
         sq.x = sq.anchor.x; sq.y = sq.anchor.y;
-        if (sq.routLeft <= 0) { relayoutExtents(sq); sq.home = { x: sq.anchor.x, y: sq.anchor.y }; setState(sq, 'regroup'); sq.regroupT = 8; sq.brokenT = 0; }
+        if (sq.routLeft <= 0) { relayoutExtents(sq); sq.home = { x: sq.anchor.x, y: sq.anchor.y }; setState(sq, 'regroup'); sq.regroupT = 8; sq.brokenT = 0; if (sq.cohesion != null) sq.cohesion = Math.max(sq.cohesion, COH_AFTER); } // [behaviour]
         vOff = 3.0;
         break;
       }
       case 'rest':
         sq.energy += dt * 4 / 60; // v1.6: 4 / min at rest (was 2.5)
-        sq.gasStock = Math.min(GAS_STOCK, sq.gasStock + dt / 10); sq.lbdStock = Math.min(12, sq.lbdStock + dt / 60); // v1.7: restock at staging
+        sq.gasStock = Math.min(GAS_STOCK, sq.gasStock + dt / 4); sq.lbdStock = Math.min(12, sq.lbdStock + dt / 60); // v1.7: restock at staging
         break;
       default: { // hold
         const ratio = sq.load / Math.max(1, sq.strength);
@@ -978,8 +1153,9 @@ export default function create(sim) {
         if (sq.front === 0 && sq.near < 10 && !sq.creep) {
           sq.quietT += dt;
           const ex = sq.home.x - sq.anchor.x, ey = sq.home.y - sq.anchor.y, d = hyp(ex, ey);
-          if (sq.quietT > 15 && d > 1) { const s = Math.min(d, 0.7 * e * dt); const nx = sq.anchor.x + ex / d * s, ny = sq.anchor.y + ey / d * s; if (walkAt(nx, ny)) { sq.anchor.x = nx; sq.anchor.y = ny; } }
+          if (sq.gate) { if (sq.quietT > 15 && d > 1) { const s = Math.min(d, 0.7 * e * dt); const nx = sq.anchor.x + ex / d * s, ny = sq.anchor.y + ey / d * s; if (walkAt(nx, ny)) { sq.anchor.x = nx; sq.anchor.y = ny; } } }
         } else sq.quietT = 0;
+        if (!sq.gate && !sq.creep && phaseActive) holdMove(sq, e, dt); // [behaviour] patrols around the post, step-backs (was: drift home after 15 s quiet)
         sq.x = sq.anchor.x; sq.y = sq.anchor.y;
         break;
       }
@@ -988,7 +1164,8 @@ export default function create(sim) {
     if (sq.state !== 'move' && sq.state !== 'rest') {
       if (sq.front >= 4) sq.energy -= dt * 1.0 / 60;
       if (T - sq.attackedT < 10) sq.energy -= dt * 2.0 / 60;
-      if (sq.front === 0 && T - sq.attackedT > 30 && sq.state === 'hold') { sq.energy += dt * (sq.tactic === 'reserve' ? 2.0 : 0.5) / 60; if (sq.tactic === 'reserve') sq.gasStock = Math.min(GAS_STOCK, sq.gasStock + dt / 30); }
+      if (sq.front === 0 && T - sq.attackedT > 30 && sq.state === 'hold') { sq.energy += dt * (sq.tactic === 'reserve' ? 2.0 : 0.5) / 60; if (sq.tactic === 'reserve') sq.gasStock = Math.min(GAS_STOCK, sq.gasStock + dt / 8); }
+      if (sq.front === 0 && T - sq.attackedT > 10 && sq.gasStock < GAS_STOCK && sq.tactic !== 'reserve') { const a = Math.min(GAS_STOCK - sq.gasStock, dt / (sq.gasStock < GAS_LOW ? GAS_RESUPPLY_LOW : GAS_RESUPPLY)); sq.gasStock += a; police.counts.gasResupply += a; } // [behaviour] supply vans
     }
     sq.energy = clamp(sq.energy, 0, 100);
     if (T - sq.attackedT > 20) for (let k = 0; k < sq.na; k++) if (sq.hp[k] < 1) sq.hp[k] = Math.min(1, sq.hp[k] + HP_REGEN * dt); // v1.5
@@ -1021,7 +1198,7 @@ export default function create(sim) {
     computeBB(sq);
     if (phaseActive) contactForces(sq, dt);
     if (phaseActive) { // [behaviour] metering: metres walked on foot by squads, squad-seconds on duty
-      const C = police.counts; C.squadSec += dt; if (!sq.van) C.footM += hyp(sq.x - mx0, sq.y - my0);
+      const C = police.counts; C.squadSec += dt; if (!sq.van) { const d = hyp(sq.x - mx0, sq.y - my0); C.footM += d; if (sq.state !== 'move') C.stationM += d; }
     }
   }
   // hurt front-rank officers swap places with the fittest officer of the rear ranks (relève)
@@ -1284,7 +1461,7 @@ export default function create(sim) {
       if (op.phase === 'drain' && phaseActive) {
         drainOp(op, dt);
         // v1.6: gas behind the crowd at the closed exits drives it toward the filter gap
-        if ((op.type === 'cordon' || op.type === 'kettle' || op.type === 'funnel') && op.inside > 15 && police.escalation >= 2)
+        if ((op.type === 'cordon' || op.type === 'kettle' || op.type === 'funnel') && op.inside > 15 && police.escalation >= 1) // [behaviour] (was escalation 2)
           for (const s of op.squads) if (s !== op.filterSq && s.formation === 'line' && s.gasCd <= 0 && s.state === 'hold' && s.energy > 10 && forceOK(s)) {
             gasAt(s, s.x + (op.x - s.x) * 0.45, s.y + (op.y - s.y) * 0.45, 2, 6); s.gasCd += 10; log(s, 'gas cordon');
           }
@@ -2081,7 +2258,7 @@ export default function create(sim) {
         urgent: false, lastTick: -1e9, ticks: 0, deployed: false,
         baseForce: 8, reinforceCap: 4, opsRange: 1400, opBudget: 99, reinforcementsToday: 0, lastReinforceT: -1e9,
         pressureScale: 1.4, groundGiven: 0, heatWin: 0, heatWinT: -1e9, ms: 0, msSteps: 0, attacksOnOfficers: 0, hotspots: [], threats: [], ops, log: [],
-        counts: { gas: 0, lbd: 0, flash: 0, charges: 0, warnings: 0, arrests: 0, leaderArrests: 0, snatches: 0, filtered: 0, officersDown: 0, lineBreaks: 0, reinforcements: 0, gateBreaches: 0, intelTurns: 0, lineArrests: 0, footM: 0, squadSec: 0, routs: 0,
+        counts: { ripostes: 0, sallies: 0, ripGas: 0, cohesionBreaks: 0, rotations: 0, bounds: 0, stepBacks: 0, gasDeny: 0, gasDisperse: 0, gasResupply: 0, gas: 0, lbd: 0, flash: 0, charges: 0, warnings: 0, arrests: 0, leaderArrests: 0, snatches: 0, filtered: 0, officersDown: 0, lineBreaks: 0, reinforcements: 0, gateBreaches: 0, intelTurns: 0, lineArrests: 0, footM: 0, stationM: 0, squadSec: 0, routs: 0,
           vanTrips: 0, plans: 0, retasks: 0, blocks: 0, kettles: 0, cordons: 0, funnels: 0, splits: 0, hunts: 0, huntArrests: 0, gaps: 0 },
       };
       police.prof = prof;
