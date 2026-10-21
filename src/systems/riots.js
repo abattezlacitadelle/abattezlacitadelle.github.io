@@ -358,6 +358,9 @@ export default function create(sim) {
       return;
     }
     if (!aggrOk) { if (a >= LOOT && a <= PUSH) endAction(i); return; }
+    // v1.8: a member of its leader's protective core (crowd.js, sim.coreU < L.coreShare) that has drifted out of the core radius
+    // drops autonomous actions and goes back to the leader (it may still push / fight right next to it)
+    if (L >= 0 && r < 0 && sim.coreU) { const Ld = sim.leaders[L]; if (Ld && sim.coreU[i] >= 0 && sim.coreU[i] < (Ld.coreShare || 0) && Math.hypot(x - Ld.x, y - Ld.y) > (Ld.coreR || 10)) { if (a >= LOOT && a <= PUSH) endAction(i); return; } }
     const isBloc = c === BLACKBLOC;
     const free = r >= 0 || L < 0;   // riot members and bystanders roam further than marching followers
 

@@ -21,6 +21,11 @@ const DAY1_CROWD = 1000, CROWD_MAX = 3500, START_LEADERS = 3;
 const SQUADS_BY_DAY = [5, 6, 7, 8, 9, 10, 11];
 const BYSTANDERS_FULL = 1800, FULL_WALK_CELLS = 674652;
 const COLLAPSE_N = 50, COLLAPSE_T = 600, PROMOTE_MIN = 150;
+// v1.8: leaders each morning by tomorrow's crowd (>= LEAD2_N: 2, >= LEAD3_N: 3); one mid-day successor per day steps up
+// SUCC_DELAY s after the last active leader is arrested if >= SUCC_MIN loose protesters are still within SUCC_R m; carry-over
+// keeps RET_PEAK x peak + RET_HELD x the followers still marching at dusk (v1.4-1.7: 0.55 x peak)
+const LEAD2_N = 300, LEAD3_N = 1400, SUCC_DELAY = 45, SUCC_R = 90, SUCC_MIN = 60, SUCC_BIND_R = 60, SUCC_BIND_P = 0.85, SUCC_PER_DAY = 1;
+const RET_PEAK = 0.6, RET_HELD = 0.3;
 const HOLD_T = 60; // v1.5: seconds the Élysée gate must be held (>= WIN_COUNT followers within GOAL_R) to win
 // intensity ramp (v1.6, was the v1.5 'chaos' ramp TOD [8,0][9,.12][11,.4][13,.7][15,1][18,1][20,.8] x DAY .5..1.12):
 // sim.day.intensity = INT_TOD(hour) x INT_DAY[day], 0..1. Quiet mornings, building after ~11:00, peak 16:00-17:30,
@@ -186,6 +191,7 @@ export default function create(sim) {
     sim.spawnBystanders(Math.round(bystanderTarget() * 0.55));
     deployPolice(D.day, centroid());
     D.phase = 'day'; D.light = 1; lowT = 0; bysT = 0; D.lastFollowers = total;
+    D.succession = null; D.successorsToday = 0; D.heldAtDusk = 0; D.lastArrest = null; // v1.8
     sim.emit('dayStart', centroid()[0], centroid()[1], { day: D.day });
     spawnDueRiots();
     if (act.length && ![...sim.selected].some(id => !sim.leaders[id].arrested)) sim.select(act[0].id, false);
@@ -205,9 +211,10 @@ export default function create(sim) {
     if (D.phase !== 'day' && D.phase !== 'dusk') return;
     const st = D.stats;
     const recruits = Math.round(100 + 0.3 * st.riotJoined + 50 * D.day);
-    const retained = Math.round(0.55 * st.peak);
+    const held = D.phase === 'dusk' ? (D.heldAtDusk || 0) : 0; // v1.8: a march that survives the day keeps more of its people
+    const retained = Math.round(RET_PEAK * st.peak + RET_HELD * held);
     st.recruits = recruits;
-    D.carry = { fromDay: D.day, peak: st.peak, retained, recruits, riotJoined: st.riotJoined, crowd: clamp(retained + recruits, 0, CROWD_MAX),
+    D.carry = { fromDay: D.day, peak: st.peak, held, retained, recruits, riotJoined: st.riotJoined, crowd: clamp(retained + recruits, 0, CROWD_MAX),
       arrested: st.leadersArrested.slice(), promoted: null, squads: squadsFor(D.day + 1), reason: reason || 'time' };
     D.history.push({ day: D.day, ...st, leadersArrested: st.leadersArrested.slice(), reason: reason || 'time' });
     D.phase = 'summary'; D.endReason = reason || 'time';
@@ -223,10 +230,16 @@ export default function create(sim) {
     for (const L of sim.leaders) if (L.arrested && !L.gone) { L.gone = true; L.x = -5000; L.y = -5000; L.field = null; L.count = 0; }
     D.day++;
     let promoted = null;
-    if (activeLeaders().length < 2 && (D.day <= 2 || D.carry.crowd >= PROMOTE_MIN)) {
-      const p = sim.spawnPoints[spawnKeys()[0]] || [sim.W / 2, sim.H / 2];
-      const L = sim.api.addLeader(p[0], p[1]);
-      if (L) { promoted = L.name; L.promotedDay = D.day; }
+    // v1.8: enough leaders for tomorrow's crowd (2 from LEAD2_N marchers, 3 from LEAD3_N; v1.4-1.7: one promotion if fewer than 2)
+    const want = D.carry.crowd >= LEAD3_N ? 3 : D.carry.crowd >= LEAD2_N ? 2 : 1;
+    if (D.day <= 2 || D.carry.crowd >= PROMOTE_MIN) {
+      const names = [];
+      for (let k = 0; activeLeaders().length < want && k < 3; k++) {
+        const p = sim.spawnPoints[spawnKeys()[0]] || [sim.W / 2, sim.H / 2];
+        const L = sim.api.addLeader(p[0], p[1]);
+        if (L) { names.push(L.name); L.promotedDay = D.day; } else break;
+      }
+      if (names.length) promoted = names.join(', ');
     }
     if (!activeLeaders().length) { D.day--; return finish(false, 'decapitated', 'Every leader is behind bars and nobody steps up.'); }
     D.carry.promoted = promoted;
@@ -250,6 +263,41 @@ export default function create(sim) {
     return true;
   }
 
+  // ---------------------------------------------------------------- v1.8 mid-day successor
+  // Called while no leader is active. Returns true while a successor is pending (or has just stepped up), false when nobody can.
+  function succession(t) {
+    const A = D.lastArrest;
+    if (!D.succession) {
+      if (!A || (D.successorsToday || 0) >= SUCC_PER_DAY || D.phase !== 'day') return false;
+      if (looseNear(A.x, A.y, SUCC_R) < SUCC_MIN) return false;
+      D.succession = { at: t + SUCC_DELAY, x: A.x, y: A.y }; D.successorsToday = (D.successorsToday || 0) + 1;
+      sim.emit('succession', A.x, A.y, { phase: 'pending', at: D.succession.at });
+      return true;
+    }
+    if (t < D.succession.at) return true;
+    const S = D.succession; D.succession = null;
+    // the densest knot of loose protesters near the arrest (sampled), at least 12 m from any officer
+    let best = -1, bn = -1;
+    const cand = [];
+    sim.forEachNear(S.x, S.y, SUCC_R, j => { if (isLoose(j)) cand.push(j); });
+    if (cand.length < SUCC_MIN) return false;
+    for (let k = 0; k < 40; k++) {
+      const j = cand[Math.floor(rand() * cand.length)];
+      if (nearOfficer(px[j], py[j], 12)) continue;
+      const n = sim.countNear(px[j], py[j], 6); if (n > bn) { bn = n; best = j; }
+    }
+    if (best < 0) return false;
+    const L = sim.api.addLeader(px[best], py[best]); if (!L) return false;
+    L.promotedDay = D.day; L.successor = true; L.orderT = sim.simTime;
+    let n = 0;
+    sim.forEachNear(L.x, L.y, SUCC_BIND_R, j => { if (isLoose(j) && rand() < SUCC_BIND_P) { lead[j] = L.id; n++; } });
+    sim.emit('promoted', L.x, L.y, { name: L.name, day: D.day, successor: true, n });
+    return true;
+  }
+  const isLoose = j => lead[j] < 0 && riot[j] < 0 && panicT[j] <= 0 && !leaving[j] && (act[j] === ACT.IDLE || act[j] === ACT.FOLLOW);
+  function looseNear(x, y, r) { let n = 0; sim.forEachNear(x, y, r, j => { if (isLoose(j)) n++; }); return n; }
+  function nearOfficer(x, y, r) { for (const sq of sim.squads || []) { if (Math.hypot(sq.x - x, sq.y - y) > r + 40) continue; for (let k = 0; k < (sq.na ?? sq.n); k++) if (Math.hypot(sq.ox[k] - x, sq.oy[k] - y) < r) return true; } return false; }
+
   // ---------------------------------------------------------------- stats from events
   function onEvent(e) {
     if (!D || (D.phase !== 'day' && D.phase !== 'dusk')) return;
@@ -258,7 +306,7 @@ export default function create(sim) {
       case 'loot': { st.lootGrabs++; const k = typeof e.shop === 'number' ? e.shop : (e.shop?.idx ?? -1); if (k < 0 || !lootedToday.has(k)) { if (k >= 0) lootedToday.add(k); st.looted++; } break; }
       case 'arrest':
         st.arrests++;
-        if (e.leader != null) { const L = sim.leaders[e.leader]; if (L && !st.leadersArrested.includes(L.name)) st.leadersArrested.push(L.name); }
+        if (e.leader != null) { const L = sim.leaders[e.leader]; if (L && !st.leadersArrested.includes(L.name)) st.leadersArrested.push(L.name); if (L) D.lastArrest = { x: L.x, y: L.y, n: L.count, t: tod(), id: L.id }; }
         break;
       case 'injury': st.injured++; break;
       case 'fire': st.fires++; break;
@@ -326,11 +374,13 @@ export default function create(sim) {
       if (D.holdT >= HOLD_T) return finish(true, 'elysee', 'The crowd took and held the Élysée gate.');
     } else if (D.holdT > 0) { D.holdT = Math.max(0, D.holdT - 2 * dt); if (D.holdT === 0) sim.emit('gateHold', sim.goal.x, sim.goal.y, { phase: 'lost' }); }
     if (sim.leaders.length && !actL.length) {
-      if (canPromote()) return endDay('leaderless');
-      return finish(false, 'decapitated', 'Every leader is behind bars and nobody steps up.');
+      if (succession(t)) { /* v1.8: a successor is stepping up */ }
+      else if (canPromote()) return endDay('leaderless');
+      else return finish(false, 'decapitated', 'Every leader is behind bars and nobody steps up.');
     }
     if (D.phase === 'day' && t > H8 + 300) {
-      if (followers < COLLAPSE_N) { lowT += dt; if (lowT >= COLLAPSE_T) return finish(false, 'collapse', 'The movement fizzled out: too few marchers left on the street.'); }
+      // v1.8: a collapsed march with a leader still free ends the DAY ('dispersed', no dusk bonus); the campaign is lost only on day 7
+      if (followers < COLLAPSE_N) { lowT += dt; if (lowT >= COLLAPSE_T) return D.day < DAYS ? endDay('dispersed') : finish(false, 'collapse', 'The movement fizzled out: too few marchers left on the street.'); }
       else lowT = 0;
     }
     D.lowT = lowT;
@@ -348,7 +398,7 @@ export default function create(sim) {
         const want = Math.round(bystanderTarget() * (0.55 + 0.6 * clamp((t - H8) / (7 * 3600), 0, 1)));
         if (n < want) sim.spawnBystanders(Math.min(want - n, 60));
       }
-      if (t >= H18) { D.phase = 'dusk'; D.policeClear = true; sim.emit('dusk', sim.goal.x, sim.goal.y, { day: D.day }); }
+      if (t >= H18) { D.heldAtDusk = totalFollowers(); D.phase = 'dusk'; D.policeClear = true; sim.emit('dusk', sim.goal.x, sim.goal.y, { day: D.day }); }
       return;
     }
     // dusk: light fades, protesters and bystanders head for the map edge and are removed there

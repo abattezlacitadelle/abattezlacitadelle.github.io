@@ -398,18 +398,19 @@ export function createLogger(sim, bot) {
     if (H && HOURLY.includes(e.type) && !(e.phase && e.phase !== 'deploy')) H[e.type] = (H[e.type] || 0) + 1;
     if (e.type === 'brutality') { const k = (e.kind || '?') + (e.leader != null ? ':leader' : ''); D.brutality[k] = (D.brutality[k] || 0) + 1; }
     if (e.type === 'throw' && e.owner === 'C') D.crowdThrows++;
+    if (e.type === 'promoted' && e.successor) D.successors = (D.successors || 0) + 1; // v1.8
     if (e.type === 'injury') D.injuries[e.kind || '?'] = (D.injuries[e.kind || '?'] || 0) + 1;
     if ((e.type === 'kettle' || e.type === 'cordon' || e.type === 'funnel' || e.type === 'split') && e.phase === 'deploy') D.ops.push({ type: e.type, t: hhmm(sim.day.t) });
     if (e.type === 'arrest' && e.leader != null) {
       const L = sim.leaders[e.leader]; let own = 0; sim.forEachNear(L.x, L.y, 10, j => { if (sim.lead[j] === L.id) own++; });
       sim.gasSample(L.x, L.y);
-      D.leaderArrests.push({ t: hhmm(sim.day.t), leader: L.name, dGoal: Math.round(hyp(L.x - sim.goal.x, L.y - sim.goal.y)), count: L.count, own10: own, gas: +sim.gs.s.toFixed(2), esc: sim.police.escalation, stance: L.stance });
+      D.leaderArrests.push({ t: hhmm(sim.day.t), leader: L.name, dGoal: Math.round(hyp(L.x - sim.goal.x, L.y - sim.goal.y)), count: L.count, own10: own, gas: +sim.gs.s.toFixed(2), esc: sim.police.escalation, stance: L.stance, by: e.by, expMult: e.expMult, kettled: !!L.pexp?.kettled, successor: !!L.successor }); // v1.8: by, expMult, kettled, successor
     }
   });
   let stepAcc = 0, stepN = 0, stepMax = 0, winAcc = 0, winN = 0, hourC0 = null;
   function dayStart() {
     D = { day: sim.day.day, hours: [], tracks: {}, stalls: [], ops: [], leaderArrests: [], start: pc(), crowd0: sim.day.carry?.crowd ?? 0, events: {}, brutality: {}, injuries: {}, crowdThrows: 0,
-      minGoal: 1e9, stallS: 0, gapT0: sim.simTime, peakNA: 0, msHour: [] };
+      minGoal: 1e9, stallS: 0, gapT0: sim.simTime, peakNA: 0, msHour: [], leaders0: sim.leaders.filter(L => !L.arrested && !L.gone).length };
     hourIdx = -1; sampleT = 0; stepAcc = stepN = stepMax = 0;
   }
   function closeHour() {
@@ -469,7 +470,7 @@ export function createLogger(sim, bot) {
       officersDown: st.officersDown || 0, brutality: h.brutality || 0, gas: st.gas || 0, charges: st.charges || 0, lbd: st.lbd || 0, snatches: st.snatches || 0, huntArrests: st.huntArrests || 0,
       blocks: st.blocks || 0, kettles: st.kettles || 0, cordons: st.cordons || 0, funnels: st.funnels || 0, splits: st.splits || 0, hunts: st.hunts || 0, retasks: st.retasks || 0, vanTrips: st.vanTrips || 0,
       gaps: st.gaps || 0, lineBreaks: st.lineBreaks || 0, gateBreaches: st.gateBreaches || 0, lineArrests: st.lineArrests || 0, intelTurns: st.intelTurns || 0, reinforcements: st.reinforcements || 0, minGoal: Math.round(D.minGoal), stallMin: Math.round(D.stallS / 60), stalls: D.stalls.length,
-      reason: h.reason || sim.day.endReason || sim.day.result?.reason || '', objectives: (h.objectives || []).map(o => o.id + ':' + o.status).join(','), peakNA: D.peakNA, maxEsc: Math.max(0, ...D.hours.map(x => x.esc)) };
+      reason: h.reason || sim.day.endReason || sim.day.result?.reason || '', leaders0: D.leaders0 ?? 0, successors: D.successors || 0, held: sim.day.carry?.held ?? null, leaderArrests: D.leaderArrests.length, objectives: (h.objectives || []).map(o => o.id + ':' + o.status).join(','), peakNA: D.peakNA, maxEsc: Math.max(0, ...D.hours.map(x => x.esc)) };
     D.gapWhy = gapWhy;
     D.police = st;
     D.bot = { ...bot.state };

@@ -17,6 +17,11 @@
 // - Attachment lapses: a follower more than LOOSE_R m from its leader loses it after ~LAPSE_T s on average (4x
 //   faster beyond FAR_R), unless the leader is rallying or an encourager is near (encT). Lapsed people remember
 //   their leader (lapL) so an encourager or a Rally can re-bind them; otherwise they roam as bystanders.
+// - v1.8 protective core: a share of every march (CORE_SHARE, at least CORE_MIN people; per-agent draw sim.coreU) stays within
+//   the core radius (CORE_R0 + CORE_RK sqrt(count), capped at CORE_RMAX) of its leader: when the leader stops they shuffle and
+//   pause close by instead of roaming, when it marches they keep up with it, and gas panics them a quarter as often. Roaming,
+//   lapsing and the outward stroll bias apply to the rest. (Playtest r1: leaders of 100-900 had 0-10 own followers within
+//   10 m and were snatched at will.)
 // - "Nudge" feel: leaders react to orders at once, followers only after a personal reaction lag (rxn, 0.6-5 s)
 //   and then follow loosely; a moving leader's followers step aside in front of it.
 // - Bystanders roam the same way (longer legs). Riot members roam in riots.js (MILL).
@@ -43,6 +48,7 @@ export default function create(sim) {
   const P_PAUSE = 0.18, P_CURIOUS = 0.2, P_KNOT = 0.1;     // leg mix (the rest: strolls); followers: + walk-back legs
   const LEG_T0 = 4, LEG_T1 = 9, RXN0 = 0.6, RXN1 = 4.4, SLOW_T = 5; // leg length s; reaction lag s; leader "stalled" after SLOW_T s slow
   const W_GO = 1, W_PAUSE = 2, W_BACK = 3;                 // wander leg modes (wM)
+  const CORE_SHARE = 0.2, CORE_MIN = 20, CORE_R0 = 6, CORE_RK = 0.3, CORE_RMAX = 14, CORE_GAS = 0.25; // v1.8 protective core
   const A_HOME = ACT.HOME;
   // PRESS_UNIT: contact reaction (m/s^2) of one protester leaning hard on an officer, so sq.pressure reads as
   // "pressing protester" units (the police system compares it with sq.strength = officers x 4).
@@ -67,7 +73,9 @@ export default function create(sim) {
   // lapsed leader (-1 none); longest panic of the current episode
   const wtX = reg(Float32Array), wtY = reg(Float32Array), wT = reg(Float32Array), wSp = reg(Float32Array), wM = reg(Uint8Array);
   const rxn = reg(Float32Array), lapL = reg(Int16Array, -1), pk = reg(Float32Array);
-  Object.assign(sim, { wtX, wtY, wT, wM, lapL, rxn });
+  const coreU = reg(Float32Array, -1); // v1.8: per-agent draw in [0, 1): core member of its march when coreU < the march's core share
+  const coreSh = new Float32Array(64), coreRad = new Float32Array(64);
+  Object.assign(sim, { wtX, wtY, wT, wM, lapL, rxn, coreU });
 
   // ---------------------------------------------------------------- wander legs
   let WX = 0, WY = 0, WV = 0;
@@ -121,11 +129,35 @@ export default function create(sim) {
     return true;
   }
 
+  // v1.8 core member around a stopped leader: shuffle and pause within the core radius cr, walk back in beyond it
+  function coreStep(i, x, y, Ld, dd, cr, dt, backOk) {
+    if (dd > cr) { if (!backOk) return false; WX = tmpV.x; WY = tmpV.y; WV = v0[i] * (dd > cr * 1.6 ? 1 : 0.75); wM[i] = 0; wT[i] = 0; return true; }
+    if ((wT[i] -= dt) <= 0 || wM[i] === 0 || wM[i] === W_BACK) {
+      if (rand() < 0.5) { wM[i] = W_PAUSE; wT[i] = 3 + rand() * 6; }
+      else {
+        wM[i] = W_GO; wT[i] = 3 + rand() * 5; wSp[i] = (0.35 + rand() * 0.4) * v0[i] / 1.35;
+        const a = rand() * 6.2832, r = 3 + rand() * cr * 0.6; wtX[i] = Ld.x + Math.cos(a) * r; wtY[i] = Ld.y + Math.sin(a) * r;
+        if (!walkAt(wtX[i], wtY[i])) { wM[i] = W_PAUSE; wT[i] = 2 + rand() * 3; }
+      }
+    }
+    if (wM[i] !== W_GO) return false;
+    const dx = wtX[i] - x, dy = wtY[i] - y, d = hyp(dx, dy);
+    if (d < 1.2) { wM[i] = W_PAUSE; wT[i] = 2 + rand() * 4; return false; }
+    WX = dx / d; WY = dy / d; WV = wSp[i];
+    if (!walkAt(x + WX * 1.2, y + WY * 1.2)) { wT[i] = 0; return false; }
+    return true;
+  }
+
   function update(dt) {
     const leaders = sim.leaders, squads = sim.squads, NA = sim.NA, prevLead = sim.prevLead, T = sim.simTime;
     const nL = Math.min(leaders.length, 64);
     const gb = sim.gasBox, GCs = sim.GC, gbx0 = gb ? (gb.x0 - 1) * GCs : 0, gbx1 = gb ? (gb.x1 + 2) * GCs : 0, gby0 = gb ? (gb.y0 - 1) * GCs : 0, gby1 = gb ? (gb.y1 + 2) * GCs : 0;
-    for (let l = 0; l < nL; l++) { const L = leaders[l]; L.newCount = 0; live[l] = L.arrested || L.gone ? 0 : 1; }
+    for (let l = 0; l < nL; l++) {
+      const L = leaders[l]; L.newCount = 0; live[l] = L.arrested || L.gone ? 0 : 1;
+      const n = Math.max(1, L.count || 0); // v1.8 core share / radius (L.cohesion, the future morale hook, scales the share)
+      coreSh[l] = L.coreShare = Math.min(1, Math.max(CORE_SHARE, CORE_MIN / n) * Math.min(1.5, Math.max(0.5, 1 / (L.cohesion || 1))));
+      coreRad[l] = L.coreR = Math.min(CORE_RMAX, CORE_R0 + CORE_RK * Math.sqrt(n));
+    }
     for (const sq of squads) { sq.pressAcc = 0; if (!sq.opress || sq.opress.length < sq.n) sq.opress = new Float32Array(Math.max(sq.n, 8)); else sq.opress.fill(0); }
     // v1.6 perf: stamp the PG-m grid cells covered by any squad box (+2 m), so agents far from police skip both officer loops
     pstamp = (pstamp + 1) & 0xffff || 1;
@@ -141,6 +173,7 @@ export default function create(sim) {
     for (let n = 0; n < NA; n++) {
       const i = ord[n];
       if (cd[i] > 0) cd[i] -= dt;
+      if (coreU[i] < 0) coreU[i] = rand(); // v1.8 core draw (lazy, every agent)
       const a0 = act[i];
       if (a0 === A_DOWN || a0 === A_ARRESTED) { vx[i] = vy[i] = 0; extFx[i] = extFy[i] = 0; continue; }
       const x = px[i], y = py[i];
@@ -215,7 +248,7 @@ export default function create(sim) {
       lead[i] = L;
 
       // --- desired velocity ---
-      let dxD = 0, dyD = 0, vdes = 0;
+      let dxD = 0, dyD = 0, vdes = 0, isCore = false;
       if (home) { dxD = fleeX[i]; dyD = fleeY[i]; vdes = V_HOME; }
       else if (panicT[i] > 0) {
         if (g > 0.02 && (gGX || gGY)) { const l = hyp(gGX, gGY); fleeX[i] = -gGX / l; fleeY[i] = -gGY / l; }
@@ -227,6 +260,7 @@ export default function create(sim) {
         const Ld = leaders[L]; Ld.newCount++;
         const F = Ld.field, packed = Math.sqrt(Ld.count) * 0.95 + 3, dl = hyp(Ld.x - x, Ld.y - y);
         if (!(rxn[i] > 0)) rxn[i] = RXN0 + rand() * RXN1;
+        const core = coreU[i] < coreSh[L], cr = coreRad[L]; isCore = core && dl < cr * 2;
         const stopped = Ld.arrived || (Ld.slowT || 0) > SLOW_T || T - (Ld.orderT ?? -1e9) < rxn[i], rally = Ld.rallyT > 0;
         if (rally || stopped) {
           // the way back to the leader (v1.6 perf: only computed when needed): along its field when that passes the
@@ -234,20 +268,22 @@ export default function create(sim) {
           const roam = rally ? 0 : (ROAM_R0 + ROAM_RK * Math.sqrt(Ld.count)) * (Ld.cohesion || 1) * (cls[i] === ENCOURAGER ? 1.3 : 1);
           let backOk = false;
           if (rally || wM[i] === W_BACK || wM[i] === 0 || wT[i] <= dt) {
-            if (F && (Ld.arrived || fieldDist(F, x, y) > (Ld.prog || 0)) && fieldDir(F, x, y, tmpV)) backOk = true;
+            if (F && (Ld.arrived ? (Ld.prog || 0) < 6 : fieldDist(F, x, y) > (Ld.prog || 0)) && fieldDir(F, x, y, tmpV)) backOk = true; // v1.8: not along the field when the stopped leader was pushed / stepped off its end (gas, police)
             else backOk = dirTo(x, y, Ld.x, Ld.y, tmpV);
           }
           if (rally) {
             // Rally: everyone walks back in and packs tight around the leader
             if (dl > packed && backOk) { dxD = tmpV.x; dyD = tmpV.y; vdes = v0[i] * 1.15; } else vdes = 0;
             wT[i] = 0;
-          } else if (legStep(i, x, y, Ld, dl, roam, dt, backOk)) { dxD = WX; dyD = WY; vdes = WV; }
+          } else if (core) { if (!backOk && dl > cr) backOk = dirTo(x, y, Ld.x, Ld.y, tmpV); if (coreStep(i, x, y, Ld, dl, cr, dt, backOk)) { dxD = WX; dyD = WY; vdes = WV; } }
+          else if (legStep(i, x, y, Ld, dl, roam, dt, backOk)) { dxD = WX; dyD = WY; vdes = WV; }
         } else if (F && fieldDir(F, x, y, tmpV)) {
           // marching: follow the leader's field. Vanguard: followers may walk up to VAN_AHEAD m ahead of the leader at
           // the leader's pace (v1.6: beyond that they slow to half its pace instead of stopping in its way)
           dxD = tmpV.x; dyD = tmpV.y; wT[i] = 0;
           const ahead = (Ld.prog || 0) - fieldDist(F, x, y), lv = Math.max(0.5, Ld.speed);
           vdes = ahead > VAN_AHEAD ? Math.min(v0[i], lv * 0.5) : ahead > 2 ? Math.min(v0[i], lv * 0.9) : ahead > -1 ? Math.min(v0[i], lv * 1.1) : ahead < -15 ? v0[i] * 1.25 : v0[i];
+          if (core && dl > cr && ahead <= 2) vdes = Math.max(vdes, v0[i] * 1.2); // v1.8: the core keeps up with its leader
         } else if (dirTo(x, y, Ld.x, Ld.y, tmpV)) {
           dxD = tmpV.x; dyD = tmpV.y; vdes = dl > packed ? v0[i] : 0; wT[i] = 0;
         }
@@ -255,13 +291,13 @@ export default function create(sim) {
       if (g > 0.05 && panicT[i] <= 0) {
         const l = hyp(gGX, gGY);
         if (l > 1e-5) {
-          const w = Math.min(1, g / 0.25);
+          const w = Math.min(1, g / 0.25) * (isCore ? 0.5 : 1); // v1.8: the core leans out of the gas with its leader, not away from it
           dxD = dxD * (1 - w) - gGX / l * w * 1.5; dyD = dyD * (1 - w) - gGY / l * w * 1.5;
           const dl = hyp(dxD, dyD) || 1; dxD /= dl; dyD /= dl; vdes = Math.max(vdes, 1.4);
         }
         // v1.6: gas scatters people (panic above GAS_PANIC; v1.5 needed g > 0.4, which loose crowds walking away never met,
         // so gas only denied ground) and the panic is shorter (6-14 s, was 7-16 s): they split, then regroup
-        if (g > GAS_PANIC && rand() < dt * (g - 0.1) * (cls[i] === PACIFIST ? 0.3 : 1)) makePanic(i, 6 + rand() * 8, -gGX, -gGY);
+        if (g > GAS_PANIC && rand() < dt * (g - 0.1) * (cls[i] === PACIFIST ? 0.3 : 1) * (isCore ? CORE_GAS : 1)) makePanic(i, 6 + rand() * 8, -gGX, -gGY);
       }
       const fw = rho < 0.3 ? 1 : Math.max(0.05, 1 - Math.exp(-1.913 * (1 / rho - 1 / 5.4)));
       vdes *= fw; if (g > 1) vdes *= 0.7;

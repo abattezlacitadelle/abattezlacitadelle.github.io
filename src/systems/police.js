@@ -34,6 +34,11 @@ const PERIM_R = 110;            // v1.7: planner perimeter posts on the approach
 // squads, never re-tasked or relieved). They give ground down to GOAL_HOLD m; overwhelmed (the broken rule) the line is BREACHED: it
 // opens a gap of up to GATE_GAP m for GATE_BREACH_T s (the crowd and its leader can walk through), then closes again.
 const GATE_R = 65, GATE_GAP = 6, GATE_BREACH_T = 40, GATE_STR = 1.8, GATE_BREAK_T = 8;
+// v1.8: the gate guard is stronger on the first days (barriers, fresh reserves) and when the streets are calm: strength x GATE_STR_DAY[day]
+// x (1 + GATE_CALM x (1 - sim.day.intensity)); after a breach closes the line is re-armed (fresh officers, +GATE_REARM_E energy) and
+// cannot be breached again for GATE_REARM s (v1.7: re-breached every ~48 s, the day-1 win at 09:22 / 10:05)
+const GATE_STR_DAY = [2.2, 2.0, 1.85, 1.8, 1.8, 1.8, 1.8], GATE_CALM = 0.8, GATE_REARM = 120, GATE_REARM_E = 25;
+const GATE_BREACH_INT = 0.35; // v1.8: no breach while sim.day.intensity < 0.35 (never on day 1, day 2 only ~13:30-17:30; reinforcements stand by)
 const BLOCK_MIN_AHEAD = 110, BLOCK_WINDOW = 320, BLOCK_MAX_AHEAD = 1100, BLOCK_MIN_DG = 170; // m along the predicted route
 // v1.6 brutal: more gas, sooner; more charges
 const GAS_CD0 = 9, GAS_CD1 = 7, GAS_MASS = 8, GAS_SKIP = 0.3, GAS_CORE = 14, // [behaviour] gas every 9-16 s (v1.7: 14-24 s), from 8 people (v1.7: 10); skip ground above 0.3
@@ -54,6 +59,14 @@ const GRAB_R = 3, GRAB_ALLIES = 1, GRAB_CD0 = 7, GRAB_CD1 = 7; // v1.7 line arre
 const TRACK_DT = 5, TRACK_KEEP = 400, TRACK_W = 120, TRACK_W_HELI = 60, DEST_K = 3.5, DEST_SMOOTH = 0.5, DEST_PRIOR_GATE = 0.4;
 const DEST_KEYS = ['concorde', 'madeleine', 'operaGarnier', 'tuileries', 'palaisRoyal', 'louvre', 'pontNeuf', 'chatelet', 'hotelDeVille', 'notreDame'];           // v1.7: max escalation heat gained per 10 sim-minutes (v1.6: 1.0, v1.5: 0.6)
 const HUNT_N = 8;               // officers in a detached hunt team
+// v1.8 leader exposure (L.pexp): every EXP_DT s each active leader with fewer than EXP_OWN own (non-panicking) followers within
+// EXP_R m and fewer than EXP_DENSE people within 5 m accumulates exposure at a rate set by its risk (stance, distance to the gate,
+// crowd size, escalation 4, kettled, charged); otherwise exposure drains EXP_DECAY x faster. A leader becomes a target (snatch,
+// hunt, line grab) only when ready: exposure >= EXP_T and escalation >= 3 (>= 2 when unleashed, within 700 m of the gate or
+// kettled). A leader inside a dense core of its march cannot be taken until a kettle, a charge or gas breaks the core.
+const EXP_DT = 0.5, EXP_R = 10, EXP_OWN = 8, EXP_DENSE = 12, EXP_T = 40, EXP_DECAY = 2, EXP_MULT_MAX = 6; // (rate capped: at least ~7 s exposed)
+const EXP_STANCE = { peaceful: 0.4, firm: 1, unleashed: 2.5 };
+const EXP_DAY = [0.4, 0.6, 0.8, 1, 1, 1, 1]; // exposure rate by day (the first days are gentler)
 
 export default function create(sim) {
   const { walkAt, nearestWalkable, cellX, cellY, CELL, px, py, vx, vy, lead, act, tgt, hp, aggr, riot, panicT, extFx, extFy, gone,
@@ -499,6 +512,7 @@ export default function create(sim) {
     sq.chargeLeft = dist ?? (10 + rand() * 5); sq.chargeKeep = keep;
     sq.chargeCd = CHARGE_CD0 + rand() * CHARGE_CD1; sq.energy = Math.max(0, sq.energy - 8);
     police.counts.charges++;
+    for (const L of sim.leaders) if (!L.arrested && !L.gone && L.pexp && hyp(L.x - sq.x, L.y - sq.y) < 45) L.pexp.chargeT = T; // v1.8: a charge into the march exposes its leader
     setState(sq, 'charge');
     sim.emit('charge', sq.x, sq.y, { squad: sq.id });
     return true;
@@ -540,11 +554,12 @@ export default function create(sim) {
     sim.emit('arrest', px[i], py[i], { agent: i });
     return true;
   }
-  function arrestLeader(L, team) {
+  function arrestLeader(L, team, by) {
     if (!L || L.arrested) return false;
     L.arrested = true; L.field = null; L.arrived = true; L.path = null;
     police.counts.arrests++; police.counts.leaderArrests++;
-    sim.emit('arrest', L.x, L.y, { leader: L.id });
+    const E = L.pexp; // v1.8: how the leader was taken (snatch / hunt / line / api) and its exposure at that moment
+    sim.emit('arrest', L.x, L.y, { leader: L.id, by: by || (team ? (team.sq && team.sq.hunt ? 'hunt' : 'snatch') : 'api'), own: E ? E.own : -1, expMult: E ? +E.mult.toFixed(2) : 0 });
     if (L.stance === 'peaceful') { police.brutalityCount++; sim.emit('brutality', L.x, L.y, { severity: 5, kind: 'arrest', leader: L.id, n: 1, d: +discrimination(L.x, L.y).toFixed(2) }); } // arresting a peaceful organiser (v1.7: weight 3 + 2)
     if (team) team.leaderHeld = L;
     return true;
@@ -613,6 +628,7 @@ export default function create(sim) {
         if (tm.leader) { if (tm.leader.arrested) ok = false; tx = tm.leader.x; ty = tm.leader.y; }
         else { const j = resolveRec(tm.rec); if (j < 0 || act[j] === A_ARRESTED || act[j] === A_DOWN && rand() < 0.5) ok = false; else { tx = tm.rec.x = px[j]; ty = tm.rec.y = py[j]; tm.target = j; } }
         if (ok && (tm.t > 25 || hyp(tx - hx, ty - hy) > 70)) ok = false;
+        if (ok && tm.leader && tm.leader.pexp && !tm.leader.pexp.exposed && tm.t > 1) ok = false; // v1.8: the core closed around the leader: pull out
         if (ok && tm.t > 2 && countNear(tm.x, tm.y, 3) > 14) ok = false; // swallowed by the crowd: pull out
         if (!ok) { tm.state = 'return'; continue; }
         const d = teamMove(tm, tx, ty, 4.6, dt);
@@ -664,18 +680,17 @@ export default function create(sim) {
     sq.load = typeof sq.pressure === 'number' ? sq.pressure * police.pressureScale : load; // crowd system's force if it provides one
     sq.front = front; sq.near = near; sq.close = close;
     if (near) { sq.nearX = nx / near; sq.nearY = ny / near; }
-    sq.strength = sq.na * STR_PER_OFF * (0.45 + 0.55 * sq.energy / 100) * (sq.gate ? GATE_STR : 1) // v1.7: gate guard behind barriers
+    sq.strength = sq.na * STR_PER_OFF * (0.45 + 0.55 * sq.energy / 100) * (sq.gate ? GATE_STR_DAY[clamp((sim.day?.day || 4) - 1, 0, 6)] * (1 + GATE_CALM * (1 - clamp(sim.day?.intensity ?? 1, 0, 1))) : 1) // v1.7 (v1.8: by day and intensity)
       * (sq.gate || sq.cohesion == null ? 1 : COH_STR0 + (1 - COH_STR0) * sq.cohesion); // [behaviour] a shaken line is weaker
     // exposed leaders: few people around them, within reach in front
     sq.leaderCand = null;
     // v1.5: leaders are snatch targets from escalation 3 (doc: notoriety at level >= 3), or from level 2 when they
     // lead an Unleashed crowd; before that teams only take visible offenders
+    // v1.8: only a leader whose exposure is ready (see leaderExposure) and that is still exposed right now
     for (const L of sim.leaders) {
-      if (L.arrested || L.gone) continue;
-      if (police.escalation < 3 && !(police.escalation >= 2 && L.stance === 'unleashed')) continue;
+      if (L.arrested || L.gone || !L.pexp || !L.pexp.ready || L.pexp.own >= EXP_OWN) continue;
       const al = alongOf(sq, L.x, L.y); if (al < 2 || al > 45 || Math.abs(latOf(sq, L.x, L.y)) > sq.half + 20) continue;
-      // v1.7: exposed = few people around AND few of its own followers within 8 m (a leader inside its march is safe)
-      if (countNear(L.x, L.y, 6) < 6) { let own = 0; forEachNear(L.x, L.y, 8, j => { if (lead[j] === L.id && ++own >= 5) return true; }); if (own < 5) { sq.leaderCand = L; break; } }
+      sq.leaderCand = L; break;
     }
   }
   function snatchCandidate(sq) {
@@ -782,10 +797,9 @@ export default function create(sim) {
       for (let k = 0; k < sq.na; k++) { const ex = sq.ox[k] - x, ey = sq.oy[k] - y; if (ex * ex + ey * ey < GRAB_R * GRAB_R) return true; }
       return false;
     };
-    if (esc >= 2) for (const L of sim.leaders) {
-      if (L.arrested || L.gone || hyp(L.x - sq.x, L.y - sq.y) > R || !offNear(L.x, L.y)) continue;
-      let own = 0; forEachNear(L.x, L.y, 8, j => { if (lead[j] === L.id && ++own >= 5) return true; });
-      if (own < 5 && countNear(L.x, L.y, 4) < 4) { arrestLeader(L, null); police.counts.lineArrests++; sq.grabCd = GRAB_CD0; log(sq, 'line arrest: leader ' + L.id); return; }
+    if (esc >= 2) for (const L of sim.leaders) { // v1.8: exposure-gated (L.pexp.ready), plus nobody close around it
+      if (L.arrested || L.gone || !L.pexp || !L.pexp.ready || L.pexp.own >= EXP_OWN || hyp(L.x - sq.x, L.y - sq.y) > R || !offNear(L.x, L.y)) continue;
+      if (countNear(L.x, L.y, 4) < 4) { arrestLeader(L, null, 'line'); police.counts.lineArrests++; sq.grabCd = GRAB_CD0; log(sq, 'line arrest: leader ' + L.id); return; }
     }
     let cand = -1;
     forEachNear(sq.x, sq.y, R, j => {
@@ -1173,7 +1187,7 @@ export default function create(sim) {
         // v1.7: hunt teams never hold a line: swamped (or spent) they pull out and go back to their parent squad. In v1.6 they
         // stood in the crowd yielding and "breaking" every few seconds (thousands of lineBroken events, heat runaway to level 4)
         if (sq.hunt && phaseActive && (ratio > 0.8 || sq.front >= 6 || sq.energy < 20)) { huntWithdraw(sq); break; }
-        if (sq.breachT > 0) { sq.breachT -= dt; if (sq.breachT <= 0) { sq.gap = 0; layoutLine(sq); log(sq, 'gate closed'); } sq.x = sq.anchor.x; sq.y = sq.anchor.y; break; }
+        if (sq.breachT > 0) { sq.breachT -= dt; if (sq.breachT <= 0) { sq.gap = 0; layoutLine(sq); sq.rearmT = T + GATE_REARM; sq.energy = Math.min(100, sq.energy + GATE_REARM_E); log(sq, 'gate closed'); } sq.x = sq.anchor.x; sq.y = sq.anchor.y; break; } // v1.8: re-armed after a breach
         if (ratio > 1.05 && phaseActive) { setState(sq, 'yield'); sq.yieldT = 0; break; }
         // kettle creep: tighten slowly toward the centre while the crowd lets us
         if (sq.creep && !sq.creep.done && ratio < 0.6) creepStep(sq, e, dt);
@@ -1267,7 +1281,7 @@ export default function create(sim) {
     sq.x = sq.anchor.x; sq.y = sq.anchor.y;
     sq.energy -= dt * 1.5 / 60;
     if ((ratio > 2.0 && sq.energy < 35) || (!moved && ratio > 2.5)) sq.brokenT += dt; else sq.brokenT = Math.max(0, sq.brokenT - dt * 0.5);
-    if (sq.brokenT > GATE_BREAK_T && sq.gate) { gateBreach(sq); return; }
+    if (sq.gate) { if (T < (sq.rearmT || 0) || (sim.day?.intensity ?? 1) < GATE_BREACH_INT) sq.brokenT = 0; else if (sq.brokenT > GATE_BREAK_T) gateBreach(sq); return; } // v1.8: a gate line breaches, it never routs (v1.7 bug: it broke at 4 s, was relieved and left the street open)
     if (sq.brokenT > 4) {
       setState(sq, 'broken'); sq.routLeft = 25; sq.energy = Math.max(0, sq.energy - 15); police.counts.routs++; // [behaviour] every rout
       if (T - (sq.brokeT ?? -1e9) > 60) { police.counts.lineBreaks++; addHeat(0.2); police.urgent = true; sim.emit('lineBroken', sq.x, sq.y, { squad: sq.id }); } // v1.7: once per minute per squad (was every break, heat 0.3)
@@ -1710,7 +1724,7 @@ export default function create(sim) {
   // new job scores 1.5x more; squads in contact are sticky; blocks keep their point while it still lies on the predicted route.
   let slots = new Map(), doneSlots = [];
   function relief(s, force) {
-    if (s.role === 'relief') return;
+    if (s.role === 'relief' || s.gate) return; // v1.8: the gate guard is never relieved
     if (s.op) { s.op.squads = s.op.squads.filter(q => q !== s); s.op = null; s.creep = null; s.gap = 0; }
     s.role = 'relief'; s.slotKey = 'relief'; s.watch = null;
     const st = geo.staging[s.id % geo.staging.length];
@@ -2106,6 +2120,33 @@ export default function create(sim) {
     police.plan = out;
   }
 
+  // ===================================================================== v1.8 leader exposure (see EXP_* above)
+  let expT = 0;
+  function leaderExposure(dt) {
+    if ((expT -= dt) > 0) return; expT = EXP_DT;
+    const esc = police.escalation, g = sim.goal;
+    for (const L of sim.leaders) {
+      if (L.arrested || L.gone) continue;
+      const E = L.pexp || (L.pexp = { t: L.successor ? -EXP_T : 0, own: 0, ready: false, mult: 1, chargeT: -1e9, kettled: false }); // a mid-day successor gets a grace period
+      let own = 0;
+      forEachNear(L.x, L.y, EXP_R, j => { if (lead[j] === L.id && panicT[j] <= 0 && act[j] !== A_DOWN && act[j] !== A_ARRESTED && ++own >= 40) return true; });
+      const dense = countNear(L.x, L.y, 5), dG = hyp(L.x - g.x, L.y - g.y);
+      let kettled = false;
+      for (const op of ops) if ((op.type === 'kettle' || op.type === 'cordon' || op.type === 'funnel') && op.phase === 'drain' && hyp(L.x - op.x, L.y - op.y) < (op.r || 20) * 1.3) { kettled = true; break; }
+      let m = EXP_STANCE[L.stance] ?? 1;
+      if (dG < 300) m *= 3; else if (dG < 700) m *= 1.8; else if (dG < 1500) m *= 1.2;
+      if (L.count < 120) m *= 2;
+      if (esc >= 4) m *= 1.25;
+      if (kettled) m *= 2;
+      if (T - E.chargeT < 20) m *= 2;
+      m = Math.min(EXP_MULT_MAX, m) * EXP_DAY[clamp((sim.day?.day || 4) - 1, 0, 6)];
+      const exposed = own < EXP_OWN && dense < EXP_DENSE;
+      E.t = exposed ? Math.min(EXP_T * 2, E.t + EXP_DT * m) : E.t > 0 ? Math.max(0, E.t - EXP_DT * EXP_DECAY) : E.t;
+      E.own = own; E.mult = m; E.kettled = kettled; E.exposed = exposed;
+      E.ready = E.t >= EXP_T && (esc >= 3 || (esc >= 2 && (L.stance === 'unleashed' || dG < 700 || kettled)));
+    }
+  }
+
   // ===================================================================== escalation
   function updateEscalation(dt, phase) {
     const p = police;
@@ -2133,6 +2174,7 @@ export default function create(sim) {
   function onEvent(e) {
     const p = police; if (!p) return;
     switch (e.type) {
+      case 'dayStart': if (police.dayDone !== e.day) dayStart(); break; // v1.8: also after a day that ended early (leaderless) in the 'day' phase
       case 'loot': addHeat(0.01); break;
       case 'fire': addHeat(0.03); p.urgent = true; break;
       case 'explosion': addHeat(0.03); break;
@@ -2148,6 +2190,7 @@ export default function create(sim) {
     }
   }
   function dayStart() {
+    police.dayDone = sim.day?.day; // v1.8: once per day (event or phase change)
     police.reinforcementsToday = 0;
     police.baseEscalation = BASE_ESC[clamp((sim.day?.day || 1) - 1, 0, 6)];
     police.heat = Math.max(police.baseEscalation, police.heat * 0.5);
@@ -2169,7 +2212,7 @@ export default function create(sim) {
     if (!geo) initGeo();
     const phase = sim.day?.phase || 'day', active = phase === 'day' || phase === 'dusk';
     if (phase !== lastPhase) {
-      if (phase === 'day' && lastPhase !== null) dayStart();
+      if (phase === 'day' && lastPhase !== null && police.dayDone !== sim.day?.day) dayStart();
       if (phase === 'dusk') { police.urgent = true; police.cmdT = 1; for (const sq of squads) if (!sq.manual && !sq.op && sq.role !== 'perimeter' && sq.role !== 'relief') { sq.slotKey = null; sq.respT = null; } } // re-task for clearing
       if (lastPhase !== null) log(null, 'phase ' + phase);
       lastPhase = phase;
@@ -2200,6 +2243,7 @@ export default function create(sim) {
     if (incidents.length) flushIncidents(!active);
     t0 = performance.now(); updateOps(dt, active); pt('ops', t0);
     updateEscalation(dt, phase);
+    if (active) leaderExposure(dt); // v1.8
     if (police.ai && active) {
       // intel: a march that changes its order (new route) triggers a re-plan
       // v1.7: no peeking at orders: the police sample what they see (leader positions) every TRACK_DT s; a re-plan comes from a
