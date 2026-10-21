@@ -739,7 +739,7 @@ export default function create(sim) {
     }
     const dens = sq.front / Math.max(10, 5 * 2 * sq.half);
     let thrNear = 0; for (const j of sq.throwers) if (alongOf(sq, px[j], py[j]) < 22) thrNear++;
-    const uCharge = force && sq.chargeCd <= 0 && sq.energy > 30
+    const uCharge = force && sq.chargeCd <= 0 && sq.energy > 30 && (sq.cohesion ?? 1) > 0.5 && (sq.bh?.odds ?? 0) < RIP_ODDS // [behaviour] no charge into a crowd far bigger than the squad
       ? 40 * ((sq.front >= CHARGE_FRONT ? 1 : 0) + Math.min(2, thrNear * 0.4) + (sq.load > 0.6 * sq.strength ? 1 : 0)) * (1 - Math.min(0.7, dens / 4)) : 0;
     let wind = 1; if (sim.WIND && sq.near) { const gx = sq.nearX - sq.x, gy = sq.nearY - sq.y, l = hyp(gx, gy) || 1; if ((sim.WIND.x * gx + sim.WIND.y * gy) / l < -0.25) wind = 0.5; }
     const mass = sq.near + 0.5 * sq.front; // area denial in front of the line counts too
@@ -904,7 +904,7 @@ export default function create(sim) {
   //   a gas volley on the attackers. Snatch teams are readied to take the attackers.
   // - Live lines: quiet squads patrol forward and back around their post, a bound forward at a close crowd (show of force), a step
   //   back when outnumbered, and the front rank rotates with the second rank every ~40-70 s in contact (releve).
-  const COH_ODDS0 = 3, COH_DRAIN = 0.022, COH_REC = 0.025, COH_RAGGED = 0.7, COH_BREAK = 0.22, COH_AFTER = 0.42, COH_STR0 = 0.55;
+  const COH_ODDS0 = 3, COH_DRAIN = 0.022, COH_REC = 0.025, COH_RAGGED = 0.7, COH_BREAK = 0.22, COH_AFTER = 0.42, COH_STR0 = 0.55, COH_SWAMP = 12;
   const RIP_AGGRO = 2.5, RIP_CD0 = 16, RIP_CD1 = 14, RIP_MAX = 40, RIP_ODDS = 6, RIP_OP = 14;
   const PATROL_V = 0.8, PATROL_R = 8, PATROL_R_RES = 16, ROT_T0 = 40, ROT_T1 = 30;
   function bhOf(sq) {
@@ -933,7 +933,7 @@ export default function create(sim) {
     if (odds < 1.5 && T - sq.attackedT > 15) dC += COH_REC * (sq.tactic === 'reserve' ? 2 : 1);
     else if (odds < COH_ODDS0 && !att) dC += COH_REC * 0.35;
     sq.cohesion = clamp(sq.cohesion + dC * dt, 0, 1);
-    if (!sq.hunt && sq.cohesion < COH_BREAK && (ratio > 0.5 || att) && (st === 'hold' || st === 'push' || st === 'yield')) { rout(sq, odds); shapeLine(sq, b); return; }
+    if (!sq.hunt && sq.cohesion < COH_BREAK && (ratio > 0.5 || att || odds > COH_SWAMP) && (st === 'hold' || st === 'push' || st === 'yield')) { rout(sq, odds); shapeLine(sq, b); return; }
     // close crowd lingering in front (dispersal gas after warnings, see decide)
     if (sq.front + (sq.close || 0) >= 8) b.lingerT += dt; else b.lingerT = Math.max(0, b.lingerT - 2 * dt);
     // ---- aggression meter and reactions (the hits themselves are added in hitOfficer)
