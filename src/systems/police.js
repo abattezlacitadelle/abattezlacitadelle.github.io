@@ -36,7 +36,7 @@ const PERIM_R = 110;            // v1.7: planner perimeter posts on the approach
 const GATE_R = 65, GATE_GAP = 6, GATE_BREACH_T = 40, GATE_STR = 1.8, GATE_BREAK_T = 8;
 const BLOCK_MIN_AHEAD = 110, BLOCK_WINDOW = 320, BLOCK_MAX_AHEAD = 1100, BLOCK_MIN_DG = 170; // m along the predicted route
 // v1.6 brutal: more gas, sooner; more charges
-const GAS_CD0 = 9, GAS_CD1 = 7, GAS_MASS = 8, GAS_SKIP = 0.3, // [behaviour] gas every 9-16 s (v1.7: 14-24 s), from 8 people (v1.7: 10); skip ground above 0.3
+const GAS_CD0 = 9, GAS_CD1 = 7, GAS_MASS = 8, GAS_SKIP = 0.3, GAS_CORE = 14, // [behaviour] gas every 9-16 s (v1.7: 14-24 s), from 8 people (v1.7: 10); skip ground above 0.3
    CHARGE_CD0 = 22, CHARGE_CD1 = 12, CHARGE_FRONT = 4, SNATCH_CD0 = 16, SNATCH_CD1 = 10;
 // riot gear: damage multiplier per hit kind (helmet, shield, body armour)
 // v1.6 (v1.5: melee .25, rock .3, paving .35, bottle .3, firework .3, molotov .45, fire .4, blast .5; v1.4: .35/.5/.5/.45/.5/.6/.6/.6)
@@ -733,7 +733,8 @@ export default function create(sim) {
     // v1.6 area denial: a block line gasses the head and flanks of the march it waits for as it comes within ~130 m
     const wd = watchD(sq);
     if (force && esc >= 1 && sq.gasCd <= 0 && wd < 150 && wd > 25 && sq.energy > 10) { // [behaviour] from escalation 1 (was 2), skips ground still gassed
-      const L = sq.watch.L, gx = L ? L.x : sq.watch.x, gy = L ? L.y : sq.watch.y;
+      const L = sq.watch.L, wx0 = L ? L.x : sq.watch.x, wy0 = L ? L.y : sq.watch.y, wl = hyp(wx0 - sq.x, wy0 - sq.y) || 1, wa = clamp(wl - 25, 22, 60); // [behaviour] the head of the march, not its leader
+      const gx = sq.x + (wx0 - sq.x) / wl * wa, gy = sq.y + (wy0 - sq.y) / wl * wa;
       if (gasFree(gx, gy)) { gasAt(sq, gx, gy, esc >= 3 ? 4 : 3, 16); sq.gasCd += 12; police.counts.gasDeny++; log(sq, 'gas ahead'); } else sq.gasCd = 4;
     }
     const dens = sq.front / Math.max(10, 5 * 2 * sq.half);
@@ -810,7 +811,8 @@ export default function create(sim) {
     const dist = clamp(l, 15, 60), lx = -gy, ly = gx;
     for (let q = 0; q < n; q++) {
       const lat = (q - (n - 1) / 2) * spread * 0.8 + (rand() - 0.5) * 6; // a spread line across the street: head and flanks
-      const t = snapWalk(sq.x + gx * (dist + (rand() - 0.5) * 8) + lx * lat, sq.y + gy * (dist + (rand() - 0.5) * 8) + ly * lat, 6); if (!t) continue;
+      let t = snapWalk(sq.x + gx * (dist + (rand() - 0.5) * 8) + lx * lat, sq.y + gy * (dist + (rand() - 0.5) * 8) + ly * lat, 6); if (!t) continue;
+      t = coreClear(t, sq); // [behaviour]
       const k = Math.floor(rand() * Math.max(1, sq.nFront));
       if (!launch('gas', sq.ox[k], sq.oy[k], t.x, t.y, sq, k)) sim.api.throwGas?.(t.x, t.y);
       police.counts.gas++;
@@ -819,6 +821,18 @@ export default function create(sim) {
   }
   // [behaviour] gas helpers
   const gasFree = (x, y) => !sim.gasSample || sim.gasSample(x, y).s < GAS_SKIP;
+  // below escalation 3 canisters are not dropped on a march's leading group (GAS_CORE m around an active leader): gas steers and
+  // thins the march from its edges instead of blowing its core apart (the core scattering exposed leaders to snatches far out)
+  function coreClear(t, sq) {
+    if (police.escalation >= 3) return t;
+    for (const L of sim.leaders) {
+      if (L.arrested || L.gone) continue;
+      let ex = t.x - L.x, ey = t.y - L.y; const d = hyp(ex, ey); if (d >= GAS_CORE) continue;
+      if (d < 0.5) { ex = sq.x - L.x; ey = sq.y - L.y; } const l = hyp(ex, ey) || 1;
+      const p = snapWalk(L.x + ex / l * GAS_CORE, L.y + ey / l * GAS_CORE, 6); if (p) { t = p; police.counts.gasCoreShift++; }
+    }
+    return t;
+  }
   function gasChoice(sq, closeN, linger, att) {
     const esc = police.escalation;
     if (closeN < 8 && !att && !sq.throwers.length && sq.near >= 8) { // approaching: deny the ground in front of the line
@@ -836,7 +850,8 @@ export default function create(sim) {
     if (n <= 0) { sq.gasCd = 10; return; }
     sq.gasStock -= n;
     for (let q = 0; q < n; q++) {
-      const t = snapWalk(sq.x + gx * dist + (rand() - 0.5) * 14, sq.y + gy * dist + (rand() - 0.5) * 14, 6); if (!t) continue;
+      let t = snapWalk(sq.x + gx * dist + (rand() - 0.5) * 14, sq.y + gy * dist + (rand() - 0.5) * 14, 6); if (!t) continue;
+      t = coreClear(t, sq); // [behaviour]
       const k = Math.floor(rand() * Math.max(1, sq.nFront));
       if (!launch('gas', sq.ox[k], sq.oy[k], t.x, t.y, sq, k)) sim.api.throwGas?.(t.x, t.y);
       police.counts.gas++;
@@ -963,7 +978,7 @@ export default function create(sim) {
     b.aggro = 0; b.ripCd = RIP_CD0 + rand() * RIP_CD1; police.counts.ripostes++;
     sq.snatchCd = Math.min(sq.snatchCd, 1.5); // arrest teams go for the attackers
     let tx = 0, ty = 0, n = 0;
-    for (const j of sq.throwers) { const al = alongOf(sq, px[j], py[j]); if (al > 2 && al < 42) { tx += px[j]; ty += py[j]; n++; } }
+    for (const list of [sq.throwers, sq.offenders]) for (const j of list) { if (j >= sim.NA) continue; const al = alongOf(sq, px[j], py[j]); if (al > 2 && al < 42) { tx += px[j]; ty += py[j]; n++; } } // attackers: throwers, brawlers, offenders in front
     if (odds > RIP_ODDS || sq.cohesion < 0.55) { // far too many to go in: gas them instead
       if (sq.gasStock >= 1) { if (n) { sq.nearX = tx / n; sq.nearY = ty / n; sq.near = Math.max(sq.near, 10); } gasVolley(sq); police.counts.ripGas++; log(sq, 'riposte: gas'); }
       b.ripCd *= 0.6; return;
@@ -2258,7 +2273,7 @@ export default function create(sim) {
         urgent: false, lastTick: -1e9, ticks: 0, deployed: false,
         baseForce: 8, reinforceCap: 4, opsRange: 1400, opBudget: 99, reinforcementsToday: 0, lastReinforceT: -1e9,
         pressureScale: 1.4, groundGiven: 0, heatWin: 0, heatWinT: -1e9, ms: 0, msSteps: 0, attacksOnOfficers: 0, hotspots: [], threats: [], ops, log: [],
-        counts: { ripostes: 0, sallies: 0, ripGas: 0, cohesionBreaks: 0, rotations: 0, bounds: 0, stepBacks: 0, gasDeny: 0, gasDisperse: 0, gasResupply: 0, gas: 0, lbd: 0, flash: 0, charges: 0, warnings: 0, arrests: 0, leaderArrests: 0, snatches: 0, filtered: 0, officersDown: 0, lineBreaks: 0, reinforcements: 0, gateBreaches: 0, intelTurns: 0, lineArrests: 0, footM: 0, stationM: 0, squadSec: 0, routs: 0,
+        counts: { ripostes: 0, sallies: 0, ripGas: 0, cohesionBreaks: 0, rotations: 0, bounds: 0, stepBacks: 0, gasDeny: 0, gasDisperse: 0, gasCoreShift: 0, gasResupply: 0, gas: 0, lbd: 0, flash: 0, charges: 0, warnings: 0, arrests: 0, leaderArrests: 0, snatches: 0, filtered: 0, officersDown: 0, lineBreaks: 0, reinforcements: 0, gateBreaches: 0, intelTurns: 0, lineArrests: 0, footM: 0, stationM: 0, squadSec: 0, routs: 0,
           vanTrips: 0, plans: 0, retasks: 0, blocks: 0, kettles: 0, cordons: 0, funnels: 0, splits: 0, hunts: 0, huntArrests: 0, gaps: 0 },
       };
       police.prof = prof;
