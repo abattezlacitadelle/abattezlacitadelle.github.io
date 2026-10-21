@@ -17,14 +17,22 @@
 - Node sim (`tools/nodesim.mjs`, `data/nav-paris-small.bin`) plus the bot and playtest runner, both working.
 - Docs: `README.md`, and `docs/objectives.md` (sites, Momentum, Breakthrough meter, camps; a design with a v1 implementation plan in §11, **not implemented**).
 
-## Last playtest (`playtest/r1/report.md`, 12 campaigns: 4 strategies × 3 seeds)
-- 11 of 12 runs are losses by **decapitation**. Every day of every run ends "leaderless".
-- **Root cause (orchestrator analysis, 2026-10-19):** across 99 leader arrests, the leader typically had **0–10 own followers within 10 m** while leading 100–900. Restless roaming (roam radius 30 + 1.8·√n) leaves leaders exposed, and police line grabs, snatches and hunts take them even when peaceful and 2–3 km from the gate. From day 2 there is only one active leader, so a single arrest ends the day.
-- Crowd shrinks from day to day (1000 → 700 → 590) because every day ends leaderless.
-- One fluke **day-1 win at 09:22** (careful-3). The gate is beatable at low intensity.
+## Last playtest (`playtest/r2/report.md`, v1.8, 12 campaigns: 4 strategies × 3 seeds × 7 days; chunked run, see contract v1.8)
+- Targets missed. There are **7 decapitation losses of 12** (target ≤ 4): reckless 3/3, diversion 3/3, careful 1/3. Passive ran all 7 days 3/3, ending on time.
+- Wins: careful-3 on **day 2 at 16:23** (target: no wins on days 1–2) and careful-1 on day 3 at 13:37. No day-1 win; the gate barrier and the crowd-held win rule work.
+- Leader arrests per played day: median 2 (mean 1.73 over 52 days). In r1 the median was 1 only because a day ended at the first arrest. By strategy (median / mean): passive 1 / 0.71, careful 2 / 2.14, diversion 2 / 2.45, reckless 3 / 2.54. 52 of 90 leader arrests were within 700 m of the gate (r1: 23 of 99), and 43 were Unleashed leaders.
+- Days now survive: 28 of 52 days reached dusk (r1: 0 of 76). Passive loses about one leader a day from day 2, on days 1–2 3 in total.
+- Crowd at day start: passive grows (1000 → ~1430–1590 on day 7) and careful holds (1000 → 1027 → 1017; 1000 → 1088) or drops (1000 → 812). Diversion slowly drops, then recovers (1000 → 937 → 846 → 948 → 1072).
+- Police stay active: 200–300 arrests a day under the custody cap, kettles, cordons and hunts every day, and gas use roughly doubled.
+- Perf: mean of hourly mean step 1.84 ms (r1 1.45); the worst hour is 3.7 ms (r1 3.8).
+- Main remaining causes: careful and diversion push at the gate ring for hours at escalation 4. Gas and charges break the core, and the leader is taken there (earned, but it happens nearly every day). Marches with few followers left (< 120) are taken quickly. Day 2 can be won through a gate breach late in the afternoon (intensity ≥ 0.35).
 
 ## Next (proposed order)
-1. **Leader survival balance:** a protective core of followers around the leader, police leader-targeting rules that depend on stance, escalation and distance, and 2 or more leaders on later days. Re-run the playtest. Close the day-1 gate fluke.
+1. **Leader survival, round 2:**
+   - Day-2 gate: raise `GATE_BREACH_INT` to about 0.5, so no breach before day 3.
+   - Exposure at the gate ring: lower the < 300 m multiplier (3 → 2), or require the leader itself to be in contact.
+   - The bot's careful and diversion strategies sit at the gate ring for hours. Make them fall back after a failed push, so the test measures play, not attrition.
+   - Then re-run `node tools/playtest.mjs --chunkMin 8.5 --out playtest/r3` (about 9 calls of 9 min).
 2. Implement objectives v1 (`docs/objectives.md` §11.1).
 3. Gauges v1 (`docs/gauges.md`), then the night planning screen.
 
