@@ -44,7 +44,23 @@ const UI2_CSS = `
 #legend .lg-it canvas { flex:none; width:46px; height:30px; border-radius:4px; box-shadow:0 0 0 1px rgba(255,255,255,.06); }
 #legend .lg-it .t small { display:block; color:var(--mute,#9a978f); font-size:10.5px; }
 #ticker .tk.low { color:#c9c6bf; }
+/* [support] public support meter (full width, first row of #gauges) */
+#gauges .g.sup { grid-column:1 / -1; gap:3px; margin-bottom:2px; cursor:help; }
+#gauges .g.sup .h { align-items:baseline; }
+#gauges .g.sup .h b { font-size:15px; font-variant-numeric:tabular-nums; }
+#gauges .g.sup .h b small { font-size:11px; font-weight:500; color:var(--mute,#9a978f); margin-left:4px; }
+#gauges .g.sup .ar { font-size:11px; margin-right:3px; } #gauges .ar.up { color:#7bd389; } #gauges .ar.dn { color:#ff6b6b; } #gauges .ar.fl { color:var(--mute,#9a978f); }
+#gauges .meter.big { height:8px; position:relative; } #gauges .meter.big em { position:absolute; top:-1px; bottom:-1px; width:2px; background:rgba(255,255,255,.55); }
+#gauges .meter.thin { height:3px; } #gauges .meter.thin i { background:#5a7fe0; }
+#gauges .sup .why { text-transform:none; letter-spacing:0; font-size:11px; color:#c9c6bf; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#gauges .sup .why .p { color:#7bd389; } #gauges .sup .why .n { color:#ff8a8f; }
+#gauges .sup .mrow { display:flex; align-items:center; gap:6px; font-size:9.5px; } #gauges .sup .mrow .meter { flex:1; }
+#ticker .tk.opinion-up { border-color:#7bd389; color:#d9f5df; font-weight:600; } #ticker .tk.opinion-dn { border-color:#ff8a8f; color:#ffd7d9; font-weight:600; }
 `;
+// [support] helpers for the public-support meter (sim.support, src/systems/support.js)
+const sgn = (v, d = 1) => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(d);
+const supColor = v => v < 20 ? '#e63946' : v < 35 ? '#f4a261' : v < 55 ? '#e9c46a' : '#7bd389';
+const supWord = v => v < 15 ? 'discredited' : v < 30 ? 'hostile' : v < 42 ? 'sceptical' : v < 55 ? 'divided' : v < 70 ? 'sympathetic' : 'behind you';
 
 // Legend catalogue: [swatch key (drawn by view.legendSwatch), label, note?]. Keys are documented in render2d.js legendSwatch().
 const LEGEND = [
@@ -239,6 +255,7 @@ export function createUI(sim, view) {
   // tension (sim.day.intensity) and police escalation (sim.police.escalation 0..4), shown only when present
   function gaugesHtml() {
     const d = D(), P = sim.police, out = [];
+    const sup = supportHtml(); if (sup) out.push(sup); // [support]
     const I = d && typeof d.intensity === 'number' && isFinite(d.intensity) ? d.intensity : null;
     if (I != null) {
       const v = clamp(I > 1.001 ? I / 100 : I, 0, 1), col = v < 0.35 ? '#7bd389' : v < 0.65 ? '#f4a261' : '#e63946';
@@ -252,6 +269,25 @@ export function createUI(sim, view) {
       out.push(`<div class="g" title="Police escalation level 0–4: 0 calm, 1 firm, 2 tear gas, 3 charges and snatch arrests, 4 all-out"><div class="h">Police <b>${Number.isInteger(E) ? E : E.toFixed(1)}/4 ${word}</b></div><div class="pips">${pips}</div></div>`);
     }
     return out.join('');
+  }
+  // [support] public support 0-100 (big bar, baseline tick at 45), trend arrow, today's change and its two biggest causes,
+  // and the police Mandate as a thin blue bar underneath. The tooltip lists every cause of today.
+  function supportHtml() {
+    const S = sim.api.supportInfo ? sim.api.supportInfo() : null;
+    if (!S || !isFinite(S.value)) return '';
+    const v = clamp(S.value, 0, 100), tr = S.trend || 0, dl = S.delta || 0;
+    const ar = tr > 0.6 ? '<span class="ar up">▲</span>' : tr < -0.6 ? '<span class="ar dn">▼</span>' : '<span class="ar fl">▸</span>';
+    const all = Object.entries(S.today || {}).filter(([, c]) => Math.abs(c.s) >= 0.05).sort((a, b) => Math.abs(b[1].s) - Math.abs(a[1].s));
+    const lab = k => sim.api.supportCauses?.()[k]?.label || k;
+    const why = all.slice(0, 2).map(([k, c]) => `<span class="${c.s > 0 ? 'p' : 'n'}">${esc(lab(k))} ${sgn(c.s)}</span>`).join(' · ') || '<span>no news yet today</span>';
+    const tip = [`Public support ${v.toFixed(0)}/100 (${supWord(v)}), ${sgn(dl)} today, trend ${sgn(tr)}/h.`,
+      'Brutality against peaceful people raises it; looting, fires and violence lower it. It sets tomorrow’s recruits.',
+      ...(all.length ? ['Today:', ...all.map(([k, c]) => `  ${lab(k)}: ${sgn(c.s, 2)} (×${c.n})`)] : []),
+      `Police mandate ${S.mandate.toFixed(0)}/100: political cover for force (escalation ceiling ${S.ceiling}/4).`].join('\n');
+    return `<div class="g sup" title="${esc(tip)}"><div class="h">Support <b>${ar}${v.toFixed(0)}<small>${sgn(dl)} today</small></b></div>` +
+      `<div class="meter big"><i style="width:${v.toFixed(1)}%;background:${supColor(v)}"></i><em style="left:45%" title="baseline"></em></div>` +
+      `<div class="why">${why}</div>` +
+      `<div class="mrow"><span>Mandate</span><div class="meter thin"><i style="width:${clamp(S.mandate, 0, 100).toFixed(1)}%"></i></div><b style="color:#9fb4f0">${S.mandate.toFixed(0)}</b></div></div>`;
   }
 
   $('speed').addEventListener('input', e => { ui.timeScale = +e.target.value; $('speedv').textContent = ui.timeScale + '×'; });
@@ -395,9 +431,29 @@ export function createUI(sim, view) {
       case 'cordon': return e.phase === 'deploy' ? { key: 'cordon' + e.op, cls: 'bad', text: `Police cordon off ${place(e.x, e.y)}`, solo: true } : null;
       case 'escalation': return e.level != null ? { key: 'esc', cls: e.level >= 3 ? 'bad' : '', text: `Police escalate: level ${Math.round(e.level)}/4`, replace: true, nofocus: true } : null;
       case 'reinforcement': return { key: 'reinf', cls: '', text: 'Police reinforcements arrive', nofocus: false };
+      case 'support': return supportText(e); // [support] big swings in public opinion
       case 'promoted': return { key: 'prom', cls: 'good', text: `${e.name} steps up to lead`, solo: true, nofocus: true };
     }
     return null;
+  }
+  // [support] 'support' {delta, cause, dir}: one cause moved public support by >= 1.5 points within a few sim-minutes
+  function supportText(e) {
+    const d = e.delta || 0, up = d > 0, at = e.x > 0 ? onStreet(e.x, e.y) : '';
+    const T = {
+      brutality: `opinion turns on the police after violence ${at}`,
+      sweeps: `arrests of peaceful marchers ${at} draw sympathy`,
+      leaders: up ? 'outrage at a leader’s arrest' : 'few mourn a rioting leader’s arrest',
+      peaceful: 'a peaceful march wins hearts',
+      stance: up ? 'calm, disciplined marches win sympathy' : 'calls for violence alienate the public',
+      looting: `your marchers loot ${at}`,
+      wildLoot: `rioters loot ${at}; the movement is blamed`,
+      damage: `shop windows smashed ${at}`,
+      fires: `fires ${at}`,
+      officers: `officers injured ${at}`,
+      collateral: `bystanders hurt ${at}`,
+      arrests: 'arrests of rioters reassure the public',
+    }[e.cause] || (up ? 'opinion swings your way' : 'opinion turns against you');
+    return { key: 'sup' + e.cause + (up ? '+' : '-'), cls: up ? 'opinion-up' : 'opinion-dn', text: `Support ${sgn(d)}: ${T.trim()}` };
   }
   sim.onEvent?.(e => { if (pendingEv.length < 400) pendingEv.push(e); });
   // Merging: repeated events of one kind within MERGE_MS collapse into one row ("Tear gas on rue Royale ×7", latest place).
@@ -454,7 +510,8 @@ export function createUI(sim, view) {
       <div class="kv"><span>Return today (55%)</span><b>${c.retained | 0}</b></div>
       <div class="kv"><span>New recruits${c.riotJoined ? ` (incl. ${c.riotJoined} riot joiners)` : ''}</span><b>+${c.recruits | 0}</b></div>
       ${c.arrested?.length ? `<div class="kv bad"><span>Leaders lost</span><b>${esc(c.arrested.join(', '))}</b></div>` : ''}
-      ${c.promoted ? `<div class="kv good"><span>Promoted</span><b>${esc(c.promoted)}</b></div>` : ''}</div>` : '';
+      ${c.promoted ? `<div class="kv good"><span>Promoted</span><b>${esc(c.promoted)}</b></div>` : ''}
+      ${sim.support ? `<div class="kv"><span>Public support</span><b style="color:${supColor(sim.support.value)}">${sim.support.value.toFixed(0)} · ${supWord(sim.support.value)}</b></div>` : ''}</div>` : ''; // [support]
     const rows = act.map(L => `<div class="lpick ${L === briefLeader ? 'cur' : ''}" data-l="${L.id}">
         <div class="lp-n"><span class="sw" style="background:${hex(L.color)}"></span>${esc(L.name)}</div>
         <div class="chips">${keys.map(k => `<button class="chip ${d.choice[L.id] === k ? 'on' : ''}" data-l="${L.id}" data-k="${k}">${esc(spawnName(k))}</button>`).join('')}</div></div>`).join('');
@@ -526,7 +583,7 @@ export function createUI(sim, view) {
       <div class="dayno">END OF DAY ${d.day} <span>/ ${d.days || 7}</span></div>${why}
       ${statGrid(s)}
       <div class="sec"><div class="sh">Leaders arrested</div><div class="${s.leadersArrested.length ? 'bad' : 'mute'}">${s.leadersArrested.length ? esc(s.leadersArrested.join(', ')) : 'none'}</div></div>
-      <div class="sec"><div class="sh">Support</div><div class="support"><i></i></div><div class="mute">Public opinion — coming soon</div></div>
+      ${summarySupport(d.day)}
       <div class="sec"><div class="sh">Tomorrow</div>
         <div class="kv"><span>Returning (55% of peak)</span><b>${c.retained | 0}</b></div>
         <div class="kv"><span>Recruits</span><b>+${c.recruits | 0}</b></div>
@@ -534,6 +591,20 @@ export function createUI(sim, view) {
         <div class="kv"><span>Police squads</span><b>${c.squads}</b></div></div>
       <button class="go" id="ov-go">Continue to day ${d.day + 1} ▸ <kbd>Enter</kbd></button></div>`;
     $('ov-go').onclick = nextDay;
+  }
+  // [support] night summary: support at dawn -> dusk, the change by cause, the overnight drift and the police mandate
+  function summarySupport(day) {
+    const S = sim.support, h = S?.history?.findLast?.(x => x.day === day) ?? S?.history?.[S.history.length - 1];
+    if (!S || !h) return '';
+    const lab = k => sim.api.supportCauses?.()[k]?.label || k, dd = h.end - h.start;
+    const rows = (h.causes || []).filter(c => Math.abs(c.s) >= 0.1).slice(0, 7)
+      .map(c => `<div class="kv ${c.s > 0 ? 'good' : 'bad'}"><span>${esc(lab(c.cause))} <span class="mute">×${c.n}</span></span><b>${sgn(c.s)}</b></div>`).join('');
+    return `<div class="sec"><div class="sh">Public support <b class="big" style="color:${supColor(h.end)}">${h.end.toFixed(0)}<span class="mute" style="font-size:12px;font-weight:500"> / 100 · ${supWord(h.end)}</span></b></div>
+      <div class="support"><i style="width:${clamp(h.end, 0, 100).toFixed(1)}%;background:${supColor(h.end)}"></i><em style="left:${clamp(h.start, 0, 100).toFixed(1)}%" title="this morning"></em></div>
+      <div class="kv ${dd >= 0 ? 'good' : 'bad'}"><span>Today (from ${h.start.toFixed(0)} this morning)</span><b>${sgn(dd)}</b></div>
+      ${rows || '<div class="mute">A quiet day: nothing moved public opinion.</div>'}
+      <div class="kv"><span>Overnight, opinion settles</span><b>${sgn(h.drift)} → ${h.after.toFixed(0)}</b></div>
+      <div class="kv"><span>Police mandate (political cover for force)</span><b style="color:#9fb4f0">${h.mStart.toFixed(0)} → ${h.mEnd.toFixed(0)}</b></div></div>`;
   }
   function nextDay() { if (!sim.api.dayContinue?.()) { showPhase(); return; } showPhase(); refreshLeaderList(true); updateHud(0, true); }
   function renderEnd() {
@@ -548,6 +619,7 @@ export function createUI(sim, view) {
       <div class="sh">Campaign · ${H.length} day${H.length === 1 ? '' : 's'}</div>
       ${statGrid(tot)}
       <div class="sec"><div class="sh">Leaders arrested</div><div class="${lost.length ? 'bad' : 'mute'}">${lost.length ? esc(lost.join(', ')) : 'none'}</div></div>
+      ${sim.support ? `<div class="sec"><div class="sh">Public support</div><div class="kv"><span>${(sim.support.history || []).map(h => h.end.toFixed(0)).join(' → ') || 'at the end'}</span><b style="color:${supColor(sim.support.value)}">${sim.support.value.toFixed(0)} · ${supWord(sim.support.value)}</b></div></div>` : ''}
       <button class="go" id="ov-go">New campaign ▸</button></div>`;
     $('ov-go').onclick = () => location.reload();
   }

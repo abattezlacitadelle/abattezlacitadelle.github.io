@@ -89,6 +89,8 @@
   #overlay .sg { background:#202329; border-radius:6px; padding:7px 8px; text-align:center; } #overlay .sg b { display:block; font-size:20px; font-variant-numeric:tabular-nums; }
   #overlay .sg span { color:var(--mute); font-size:11px; }
   #overlay .support { height:8px; border-radius:4px; background:repeating-linear-gradient(45deg,#2b2e34 0 6px,#24272d 6px 12px); margin:2px 0 4px; }
+  /* [support] night-summary support bar: fill = support at dusk, white tick = this morning */
+  #overlay .support { position:relative; } #overlay .support i { display:block; height:100%; border-radius:4px; } #overlay .support em { position:absolute; top:-2px; bottom:-2px; width:2px; background:#fff; opacity:.8; }
   #overlay .endt { font-size:44px; font-weight:900; letter-spacing:.12em; text-align:center; }
   #overlay.win .endt { color:#ffd166; } #overlay.lose .endt { color:var(--accent); }
   #overlay.win button.go { background:#e0b03a; color:#15171b; }
@@ -113,6 +115,7 @@
   <div class="row"><label>Speed</label><input type="range" id="speed" min="1" max="60" value="15"><span id="speedv">15×</span><button id="skipdusk" class="mini" title="Debug: skip ahead in the day">Skip ▸ dusk</button></div>
   <div id="stats"></div>
   <div id="daystats"></div>
+  <div id="gauges"></div><!-- [support] Support + Mandate meter, tension, police escalation (filled by ui.js) -->
   <div id="leaders"></div>
   <div id="lact"></div>
 </div>
@@ -129,7 +132,7 @@
     <div class="mute">Debug: <kbd>L</kbd> leader · <kbd>R</kbd> +100 · <kbd>P</kbd>/<kbd>X</kbd> squad · <kbd>G</kbd> gas</div>
     <div class="mute">Debug: <kbd>B</kbd> riot at cursor · <kbd>C</kbd> combat demo</div>
   </div>
-  <div style="margin-top:4px">Seven days to bring a leader with ≥300 followers into the gold ring at the <b style="color:#ffd166">Élysée</b>. You lose if every leader is arrested, if the march fizzles out, or if day 7 ends. Unleashed crowds loot and fight; peaceful ones don't.</div>
+  <div style="margin-top:4px">Seven days to bring a leader with ≥300 followers into the gold ring at the <b style="color:#ffd166">Élysée</b>. You lose if every leader is arrested, if the march fizzles out, or if day 7 ends. Unleashed crowds loot and fight; peaceful ones don't. <b>Public support</b> (top of the meters) sets tomorrow's turnout: police violence against peaceful marchers raises it; looting, fires and injured officers lower it.</div>
   <div class="mute" style="margin-top:4px;font-size:11px">Fiction. Toute ressemblance avec des lieux, personnes ou événements réels serait purement fortuite. Devoir recourir à des dégradations pour gagner n'est pas un encouragement à en commettre. Le jeu condamne toutes les violences, des manifestants comme des forces de l'ordre, et ne cherche pas à les banaliser. Any resemblance to real places, people or events is purely coincidental. Having to resort to property damage to win is not an encouragement to damage property. The game condemns all violence, by protesters and police alike, and does not seek to trivialize it.</div>
 </div>
 <div id="banner"></div>

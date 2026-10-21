@@ -10,6 +10,7 @@ import createCombat from './systems/combat.js';
 import createGas from './systems/gas.js';
 import createCrowd from './systems/crowd.js';
 import createDay from './systems/day.js';
+import createSupport from './systems/support.js'; // [support] public opinion + police mandate gauges
 export { LEADER_COLORS, NAMES, LM_NAMES, lmName, clamp, ring, holes, polyPath, areaPath, linePath, CLS, ACT } from './common.js';
 
 const LL = { republique: [48.8675, 2.3637], bastille: [48.8532, 2.3691], hotelDeVille: [48.8566, 2.3522], elysee: [48.8704, 2.3167],
@@ -17,7 +18,7 @@ const LL = { republique: [48.8675, 2.3637], bastille: [48.8532, 2.3691], hotelDe
   notreDame: [48.8530, 2.3499], louvre: [48.8606, 2.3376], pontNeuf: [48.8571, 2.3413], operaGarnier: [48.8720, 2.3316] };
 
 // system order per substep (after buildHash)
-export const SYSTEM_FACTORIES = [createLeaders, createRiots, createPolice, createCombat, createGas, createCrowd, createDay];
+export const SYSTEM_FACTORIES = [createLeaders, createRiots, createPolice, createCombat, createGas, createCrowd, createDay, createSupport]; // [support] appended
 
 // reference density of bystanders: 1800 on the full map (whose walkable area is FULL_WALK_CELLS nav cells)
 const BYSTANDERS_FULL = 1800, FULL_WALK_CELLS = 674652;
