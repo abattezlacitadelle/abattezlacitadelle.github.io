@@ -39,6 +39,7 @@ async function worker(job) {
   while (true) {
     const d = sim.day;
     if (d.phase === 'ended') { log.dayEnd(); break; }
+    if (args.untilHour && d.phase === 'day' && d.t >= +args.untilHour * 3600 && d.day >= days + (+args.startDay || 1) - 1) { sim.api.dayEnd(); continue; } // debug: cut the last day at --untilHour
     if (d.phase === 'briefing') { if (d.day > days + (+args.startDay || 1) - 1) break; bot.briefing(); log.dayStart(); sim.api.dayStart(); bot.dayStarted(); continue; }
     if (d.phase === 'summary') { log.dayEnd(); if (d.day >= days + (+args.startDay || 1) - 1) break; sim.api.dayContinue(); continue; }
     const s0 = performance.now();
@@ -67,7 +68,7 @@ async function main() {
   fs.mkdirSync(outDir, { recursive: true });
   const jobs = [];
   for (const strategy of strategies) for (const seed of seeds) jobs.push({ strategy, seed, name: `${strategy}-${seed}` });
-  const pass = ['days', 'map', 'intensity', 'startDay', 'crowd'].flatMap(k => args[k] ? ['--' + k, args[k]] : []);
+  const pass = ['days', 'map', 'intensity', 'startDay', 'crowd', 'untilHour'].flatMap(k => args[k] ? ['--' + k, args[k]] : []);
   let next = 0;
   const T0 = Date.now();
   await Promise.all(Array.from({ length: Math.min(jobsN, jobs.length) }, async () => {

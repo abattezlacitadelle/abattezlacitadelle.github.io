@@ -39,6 +39,7 @@ const GATE_R = 65, GATE_GAP = 6, GATE_BREACH_T = 40, GATE_STR = 1.8, GATE_BREAK_
 // cannot be breached again for GATE_REARM s (v1.7: re-breached every ~48 s, the day-1 win at 09:22 / 10:05)
 const GATE_STR_DAY = [2.2, 2.0, 1.85, 1.8, 1.8, 1.8, 1.8], GATE_CALM = 0.8, GATE_REARM = 120, GATE_REARM_E = 25;
 const GATE_BREACH_INT = 0.35; // v1.8: no breach while sim.day.intensity < 0.35 (never on day 1, day 2 only ~13:30-17:30; reinforcements stand by)
+const GATE_GIVE = 0;       // v1.8: a gate line gives no ground (its post is the narrow point of the street) (v1.7: down to GOAL_HOLD 46 m, where the streets open into the square and an 8 m line no longer closes them: the day-1 win at 09:05)
 const BLOCK_MIN_AHEAD = 110, BLOCK_WINDOW = 320, BLOCK_MAX_AHEAD = 1100, BLOCK_MIN_DG = 170; // m along the predicted route
 // v1.6 brutal: more gas, sooner; more charges
 const GAS_CD0 = 9, GAS_CD1 = 7, GAS_MASS = 8, GAS_SKIP = 0.3, GAS_CORE = 14, // [behaviour] gas every 9-16 s (v1.7: 14-24 s), from 8 people (v1.7: 10); skip ground above 0.3
@@ -1277,7 +1278,7 @@ export default function create(sim) {
     if (sq.state !== 'yield') { setState(sq, 'yield'); sq.yieldT = 0; }
     const v = Math.min(0.6, 0.3 * ratio) * dt, ax = sq.anchor.x - sq.dx * v, ay = sq.anchor.y - sq.dy * v;
     let moved = false;
-    if (walkAt(ax, ay) && goalD(ax, ay) > GOAL_HOLD) { sq.anchor.x = ax; sq.anchor.y = ay; moved = true; police.groundGiven += v; } // v1.6: lines stop giving ground short of the gate
+    if (walkAt(ax, ay) && goalD(ax, ay) > (sq.gate ? GATE_R - GATE_GIVE : GOAL_HOLD)) { sq.anchor.x = ax; sq.anchor.y = ay; moved = true; police.groundGiven += v; } // v1.6: lines stop giving ground short of the gate
     sq.x = sq.anchor.x; sq.y = sq.anchor.y;
     sq.energy -= dt * 1.5 / 60;
     if ((ratio > 2.0 && sq.energy < 35) || (!moved && ratio > 2.5)) sq.brokenT += dt; else sq.brokenT = Math.max(0, sq.brokenT - dt * 0.5);
@@ -2132,7 +2133,7 @@ export default function create(sim) {
       forEachNear(L.x, L.y, EXP_R, j => { if (lead[j] === L.id && panicT[j] <= 0 && act[j] !== A_DOWN && act[j] !== A_ARRESTED && ++own >= 40) return true; });
       const dense = countNear(L.x, L.y, 5), dG = hyp(L.x - g.x, L.y - g.y);
       let kettled = false;
-      for (const op of ops) if ((op.type === 'kettle' || op.type === 'cordon' || op.type === 'funnel') && op.phase === 'drain' && hyp(L.x - op.x, L.y - op.y) < (op.r || 20) * 1.3) { kettled = true; break; }
+      for (const op of ops) if ((op.type === 'kettle' || op.type === 'cordon' || op.type === 'funnel') && (op.phase === 'closed' || op.phase === 'drain') && hyp(L.x - op.x, L.y - op.y) < (op.r || 20) * 1.3) { kettled = true; break; }
       let m = EXP_STANCE[L.stance] ?? 1;
       if (dG < 300) m *= 3; else if (dG < 700) m *= 1.8; else if (dG < 1500) m *= 1.2;
       if (L.count < 120) m *= 2;

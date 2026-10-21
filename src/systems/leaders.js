@@ -14,6 +14,7 @@ const WAIT_GRACE = 6, WAIT_MIN = 0.2, WAIT_R = 12; // v1.7: s after an order bef
 const GAS_SLOW = 0.7;  // v1.6: leader speed factor in gas > 0.3 (was 0.55)
 const LINE_KEEP = 5;   // v1.7: a marching leader halts this many metres short of an officer in front of it
 const LEADER_GAS = 0.25, V_GAS_ESC = 1.3, GAS_PROBE = 9; // v1.7: gas concentration that makes a leader step out of the cloud, and how fast (v1.8: 0.25, was 0.5: the leader leaves with its core instead of staying alone in thin gas)
+const GATE_PLANE = 0.4, GATE_EDGE = 3; // v1.8 gate barrier (same as crowd.js)
 const DXS = [1, -1, 0, 0, 1, 1, -1, -1], DYS = [0, 0, 1, -1, 1, -1, 1, -1]; // flow-field direction codes (sim.js)
 
 export default function create(sim) {
@@ -101,7 +102,7 @@ export default function create(sim) {
         if (L.arrested && !L.arrestSeen) { L.arrestSeen = true; L.arrestedAt = sim.simTime; }
         continue;
       }
-      const F = L.field;
+      const F = L.field, lx0 = L.x, ly0 = L.y; // v1.8: start position (gate barrier)
       L.prog = F ? fieldDist(F, L.x, L.y) : 0;
       let moving = false;
       // v1.7 gas reflex: a leader in a thick cloud steps out of it (against the gradient) like everyone else, then resumes the
@@ -190,6 +191,16 @@ export default function create(sim) {
       for (const sq of squads) for (let k = 0; !sq.van && k < sq.n; k++) {
         const ox = sq.ox[k], oy = sq.oy[k], dx = L.x - ox, dy = L.y - oy, d = Math.hypot(dx, dy);
         if (d < 0.9 && d > 1e-4) { const nx = ox + dx / d * 0.9, ny = oy + dy / d * 0.9; if (walkAt(nx, ny)) { L.x = nx; L.y = ny; } if (moving) L.blockedT = 1.5; }
+      }
+      // v1.8 gate barrier: a leader never walks (or is shoved by a passing squad) through an unbreached gate line, not even past its
+      // ends (v1.8 tests: a leader slipped past the end of a gate line, recruited the bystanders inside and held the gate on day 1)
+      for (const sq of squads) {
+        if (!sq.gate || sq.formation !== 'line') continue;
+        const al0 = (lx0 - sq.x) * sq.dx + (ly0 - sq.y) * sq.dy; if (al0 < -GATE_PLANE) continue;
+        const rx = L.x - sq.x, ry = L.y - sq.y, al = rx * sq.dx + ry * sq.dy; if (al >= -GATE_PLANE) continue;
+        const la = rx * sq.pxu + ry * sq.pyu; if (la < -sq.right - GATE_EDGE || la > sq.left + GATE_EDGE) continue;
+        if (sq.gap > 0 && Math.abs(la - (sq.gapLat || 0)) < sq.gap / 2) continue;
+        L.x = lx0; L.y = ly0; L.blockedT = 1.5;
       }
     }
     // followers of arrested leaders are released (the crowd may re-attach them to another leader)

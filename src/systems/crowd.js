@@ -49,6 +49,7 @@ export default function create(sim) {
   const LEG_T0 = 4, LEG_T1 = 9, RXN0 = 0.6, RXN1 = 4.4, SLOW_T = 5; // leg length s; reaction lag s; leader "stalled" after SLOW_T s slow
   const W_GO = 1, W_PAUSE = 2, W_BACK = 3;                 // wander leg modes (wM)
   const CORE_SHARE = 0.2, CORE_MIN = 20, CORE_R0 = 6, CORE_RK = 0.3, CORE_RMAX = 14, CORE_GAS = 0.25; // v1.8 protective core
+  const GATE_PLANE = 0.4, GATE_EDGE = 3;                  // v1.8 gate barrier (see the hard constraint below)
   const A_HOME = ACT.HOME;
   // PRESS_UNIT: contact reaction (m/s^2) of one protester leaning hard on an officer, so sq.pressure reads as
   // "pressing protester" units (the police system compares it with sq.strength = officers x 4).
@@ -381,6 +382,19 @@ export default function create(sim) {
         for (let k = 0; k < sq.n; k++) {
           const ex = px[i] - sq.ox[k], ey = py[i] - sq.oy[k], d = hyp(ex, ey);
           if (d < 0.7 && d > 1e-4) { const qx = sq.ox[k] + ex / d * 0.7, qy = sq.oy[k] + ey / d * 0.7; if (walkAt(qx, qy)) { px[i] = qx; py[i] = qy; } }
+        }
+        // v1.8 gate barrier: nobody squeezes through an unbreached gate line (crossing the plane GATE_PLANE m behind its front,
+        // within its width + GATE_EDGE m); a breach gap lets people through. (v1.8 tests: a dense pushing crowd seeped through
+        // the gaps between officers and held the gate on day 1 without any breach)
+        if (sq.gate && sq.formation === 'line') {
+          const ra = x - sq.x, rb = y - sq.y, al0 = ra * sq.dx + rb * sq.dy;
+          if (al0 < -GATE_PLANE) continue;
+          const rx = px[i] - sq.x, ry = py[i] - sq.y, al = rx * sq.dx + ry * sq.dy; if (al >= -GATE_PLANE) continue;
+          const la = rx * sq.pxu + ry * sq.pyu; if (la < -sq.right - GATE_EDGE || la > sq.left + GATE_EDGE) continue;
+          if (sq.gap > 0 && Math.abs(la - (sq.gapLat || 0)) < sq.gap / 2) continue;
+          const qx = px[i] + sq.dx * (-GATE_PLANE - al), qy = py[i] + sq.dy * (-GATE_PLANE - al);
+          if (walkAt(qx, qy)) { px[i] = qx; py[i] = qy; } else { px[i] = x; py[i] = y; }
+          const vn = vx[i] * sq.dx + vy[i] * sq.dy; if (vn < 0) { vx[i] -= vn * sq.dx; vy[i] -= vn * sq.dy; }
         }
       }
       // action label: panic overrides everything; otherwise only the crowd's own states are rewritten

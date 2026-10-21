@@ -26,6 +26,9 @@ const COLLAPSE_N = 50, COLLAPSE_T = 600, PROMOTE_MIN = 150;
 // keeps RET_PEAK x peak + RET_HELD x the followers still marching at dusk (v1.4-1.7: 0.55 x peak)
 const LEAD2_N = 300, LEAD3_N = 1400, SUCC_DELAY = 45, SUCC_R = 90, SUCC_MIN = 60, SUCC_BIND_R = 60, SUCC_BIND_P = 0.85, SUCC_PER_DAY = 1;
 const RET_PEAK = 0.6, RET_HELD = 0.3;
+// v1.8: the gate is held by a crowd, not a lone leader: >= WIN_NEAR of the leader's own followers within GOAL_R + WIN_NEAR_R m
+// (v1.7 counted all followers anywhere; the r1 day-1 win at 09:22 and a v1.8 test win at 08:43 had a leader with ~0 people near it)
+const WIN_NEAR = 150, WIN_NEAR_R = 20;
 const HOLD_T = 60; // v1.5: seconds the Élysée gate must be held (>= WIN_COUNT followers within GOAL_R) to win
 // intensity ramp (v1.6, was the v1.5 'chaos' ramp TOD [8,0][9,.12][11,.4][13,.7][15,1][18,1][20,.8] x DAY .5..1.12):
 // sim.day.intensity = INT_TOD(hour) x INT_DAY[day], 0..1. Quiet mornings, building after ~11:00, peak 16:00-17:30,
@@ -437,7 +440,8 @@ export default function create(sim) {
   sim.api.intensityAt = (day, hours) => intensityAt(day, hours * 3600); // v1.6: for the HUD / tests
   sim.api.dayPlan =() => ({ riots: D.riotPlan, squads: D.squadsToday, crowd: D.carry?.crowd ?? 0 });
   // winner excludes arrested leaders
-  sim.winner = () => sim.leaders.find(L => !L.arrested && !L.gone && L.count >= sim.WIN_COUNT && Math.hypot(L.x - sim.goal[0], L.y - sim.goal[1]) < sim.GOAL_R) || null;
+  sim.winner = () => sim.leaders.find(L => !L.arrested && !L.gone && L.count >= sim.WIN_COUNT && Math.hypot(L.x - sim.goal[0], L.y - sim.goal[1]) < sim.GOAL_R && nearOwn(L) >= WIN_NEAR) || null;
+  function nearOwn(L) { let n = 0; sim.forEachNear(sim.goal[0], sim.goal[1], sim.GOAL_R + WIN_NEAR_R, j => { if (lead[j] === L.id && ++n >= WIN_NEAR) return true; }); return n; } // v1.8
   if (managed) sim.initScenario = setupCampaign;
   sim.onEvent?.(onEvent);
 
